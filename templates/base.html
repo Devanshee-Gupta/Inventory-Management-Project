@@ -21,11 +21,21 @@
             >Categories</a
           >
           <a
+            href="{% url 'item-list' %}"
+            class="text-light text-decoration-none me-3"
+            >Items</a
+          >
+          <a
             href="{% url 'location-list' %}"
             class="text-light text-decoration-none me-3"
             >Locations</a
           >
           {% if user.profile.is_manager %}
+          <a
+            href="{% url 'archived-item-list' %}"
+            class="text-light text-decoration-none me-3"
+            >Archived Items</a
+          >
           <a
             href="{% url 'assignment-list' %}"
             class="text-light text-decoration-none me-3"
