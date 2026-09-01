@@ -1,3 +1,4 @@
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
@@ -35,3 +36,11 @@ class IsManagerOrReadOnly(BasePermission):
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return request.user.is_authenticated
         return is_manager(request.user)
+    
+    
+class ManagerRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
+    """Class-based-view mixin — used by CreateView/UpdateView across all apps."""
+    raise_exception = True
+
+    def test_func(self):
+        return is_manager(self.request.user)
