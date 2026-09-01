@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Assign Staff to Location{% endblock %}
+{% block content %}
+<h3>Assign Staff to Location</h3>
+<form method="post">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+        <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+    {% endif %}
+    <div class="mb-3">
+        <label class="form-label">Staff Member</label>
+        {{ form.staff }}
+        {% if form.staff.errors %}<div class="text-danger small">{{ form.staff.errors }}</div>{% endif %}
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Location</label>
+        {{ form.location }}
+        {% if form.location.errors %}<div class="text-danger small">{{ form.location.errors }}</div>{% endif %}
+    </div>
+    <button type="submit" class="btn btn-primary">Assign</button>
+    <a href="{% url 'assignment-list' %}" class="btn btn-outline-secondary">Cancel</a>
+</form>
+{% endblock %}

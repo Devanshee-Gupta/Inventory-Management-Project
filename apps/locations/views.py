@@ -1,16 +1,17 @@
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.urls import reverse_lazy
-from django.views.generic import CreateView, ListView, UpdateView
+from django.views.generic import CreateView, DeleteView, ListView, UpdateView
 from rest_framework import viewsets
 
-from apps.accounts.permissions import IsManagerOrReadOnly, ManagerRequiredMixin
+from apps.accounts.permissions import IsManager, IsManagerOrReadOnly, ManagerRequiredMixin
 
-from .forms import LocationForm
-from .models import Location
-from .serializers import LocationSerializer
+from .forms import AssignmentForm, LocationForm
+from .models import Location, StaffLocationAssignment
+from .serializers import AssignmentSerializer, LocationSerializer
+from .services import get_accessible_locations
 
 
-# ---- Template views ----
+# ---- Location template views ----
 
 class LocationListView(LoginRequiredMixin, ListView):
     model = Location
@@ -19,9 +20,8 @@ class LocationListView(LoginRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
-        # Every authenticated user sees every location in this branch.
-        # Staff-only-assigned-locations filtering is added in feature/staff-assignment.
-        return Location.objects.all()
+        # Rule 7 enforced here: Manager -> all, Staff -> assigned only.
+        return get_accessible_locations(self.request.user)
 
 
 class LocationCreateView(ManagerRequiredMixin, CreateView):
@@ -38,15 +38,48 @@ class LocationUpdateView(ManagerRequiredMixin, UpdateView):
     success_url = reverse_lazy("location-list")
 
 
+# ---- Assignment template views (Manager-only, all four operations) ----
+
+class AssignmentListView(ManagerRequiredMixin, ListView):
+    model = StaffLocationAssignment
+    template_name = "locations/assignment_list.html"
+    context_object_name = "assignments"
+    paginate_by = 20
+    queryset = StaffLocationAssignment.objects.select_related("staff", "location")
+
+
+class AssignmentCreateView(ManagerRequiredMixin, CreateView):
+    model = StaffLocationAssignment
+    form_class = AssignmentForm
+    template_name = "locations/assignment_form.html"
+    success_url = reverse_lazy("assignment-list")
+
+
+class AssignmentDeleteView(ManagerRequiredMixin, DeleteView):
+    model = StaffLocationAssignment
+    template_name = "locations/assignment_confirm_delete.html"
+    success_url = reverse_lazy("assignment-list")
+    # This is the one place in the system where deletion is legitimate —
+    # see the branch-level note at the top of this document for why.
+
+
 # ---- DRF API (session-authenticated) ----
 
 class LocationViewSet(viewsets.ModelViewSet):
-    """
-    list/retrieve  -> any authenticated user
-    create/update  -> Manager only
-    delete         -> disabled (use is_active=False instead, see model docstring)
-    """
-    queryset = Location.objects.all()
     serializer_class = LocationSerializer
     permission_classes = [IsManagerOrReadOnly]
     http_method_names = ["get", "post", "put", "patch", "head", "options"]
+
+    def get_queryset(self):
+        return get_accessible_locations(self.request.user)
+
+
+class AssignmentViewSet(viewsets.ModelViewSet):
+    """
+    Manager-only in every direction, including read — assignment data is
+    an administrative access-control list, not something Staff need to
+    browse via the API.
+    """
+    queryset = StaffLocationAssignment.objects.select_related("staff", "location")
+    serializer_class = AssignmentSerializer
+    permission_classes = [IsManager]
