@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h3>Welcome, {{ user.username }}</h3>
+<p>Role: <strong>{{ user.profile.get_role_display }}</strong></p>
+<p class="text-muted">This is a temporary landing page. It will be replaced by the real dashboard in <code>feature/dashboard</code>.</p>
+{% endblock %}
