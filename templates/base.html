@@ -25,6 +25,13 @@
             class="text-light text-decoration-none me-3"
             >Locations</a
           >
+          {% if user.profile.is_manager %}
+          <a
+            href="{% url 'assignment-list' %}"
+            class="text-light text-decoration-none me-3"
+            >Staff Assignments</a
+          >
+          {% endif %}
           <span class="text-light me-3">
             {{ user.username }} ({{ user.profile.get_role_display }})
           </span>

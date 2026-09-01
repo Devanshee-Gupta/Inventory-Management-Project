@@ -4,7 +4,7 @@ from django.urls import reverse
 
 from apps.accounts.models import Profile
 
-from .models import Location
+from .models import Location, StaffLocationAssignment
 
 
 class LocationModelTests(TestCase):
@@ -93,3 +93,97 @@ class LocationAPITests(TestCase):
         self.client.login(username="mgr", password="pass12345")
         response = self.client.delete(f"/api/locations/{loc.pk}/")
         self.assertEqual(response.status_code, 405)
+        
+
+class StaffLocationAssignmentModelTests(TestCase):
+    def setUp(self):
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+        self.location = Location.objects.create(name="Main Warehouse", code="WH01")
+
+    def test_str_representation(self):
+        assignment = StaffLocationAssignment.objects.create(staff=self.staff, location=self.location)
+        self.assertEqual(str(assignment), "stf → WH01")
+
+    def test_duplicate_assignment_rejected_at_db_level(self):
+        StaffLocationAssignment.objects.create(staff=self.staff, location=self.location)
+        with self.assertRaises(Exception):
+            StaffLocationAssignment.objects.create(staff=self.staff, location=self.location)
+
+
+class AssignmentPermissionTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+        self.location = Location.objects.create(name="Main Warehouse", code="WH01")
+
+    def test_staff_cannot_view_assignment_list(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(reverse("assignment-list"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_manager_can_create_assignment(self):
+        self.client.login(username="mgr", password="pass12345")
+        response = self.client.post(
+            reverse("assignment-create"), {"staff": self.staff.pk, "location": self.location.pk}
+        )
+        self.assertRedirects(response, reverse("assignment-list"))
+        self.assertTrue(
+            StaffLocationAssignment.objects.filter(staff=self.staff, location=self.location).exists()
+        )
+
+    def test_manager_form_rejects_non_staff_user(self):
+        self.client.login(username="mgr", password="pass12345")
+        # manager himself is not a valid "staff" choice
+        response = self.client.post(
+            reverse("assignment-create"), {"staff": self.manager.pk, "location": self.location.pk}
+        )
+        self.assertEqual(response.status_code, 200)  # re-renders form with error
+        self.assertFalse(
+            StaffLocationAssignment.objects.filter(staff=self.manager, location=self.location).exists()
+        )
+
+    def test_manager_can_delete_assignment(self):
+        assignment = StaffLocationAssignment.objects.create(staff=self.staff, location=self.location)
+        self.client.login(username="mgr", password="pass12345")
+        response = self.client.post(reverse("assignment-delete", args=[assignment.pk]))
+        self.assertRedirects(response, reverse("assignment-list"))
+        self.assertFalse(StaffLocationAssignment.objects.filter(pk=assignment.pk).exists())
+
+
+class LocationAccessFilteringTests(TestCase):
+    """Rule 7: Managers see all locations, Staff only see assigned ones."""
+
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+
+        self.wh01 = Location.objects.create(name="Main Warehouse", code="WH01")
+        self.store01 = Location.objects.create(name="Store One", code="STORE01")
+        StaffLocationAssignment.objects.create(staff=self.staff, location=self.wh01)
+
+    def test_manager_sees_all_locations(self):
+        self.client.login(username="mgr", password="pass12345")
+        response = self.client.get(reverse("location-list"))
+        self.assertContains(response, "WH01")
+        self.assertContains(response, "STORE01")
+
+    def test_staff_sees_only_assigned_location(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(reverse("location-list"))
+        self.assertContains(response, "WH01")
+        self.assertNotContains(response, "STORE01")
+
+    def test_staff_api_list_filtered_too(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get("/api/locations/")
+        codes = [loc["code"] for loc in response.json()["results"]] if "results" in response.json() else [
+            loc["code"] for loc in response.json()
+        ]
+        self.assertIn("WH01", codes)
+        self.assertNotIn("STORE01", codes)
