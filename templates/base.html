@@ -20,6 +20,11 @@
             class="text-light text-decoration-none me-3"
             >Categories</a
           >
+          <a
+            href="{% url 'location-list' %}"
+            class="text-light text-decoration-none me-3"
+            >Locations</a
+          >
           <span class="text-light me-3">
             {{ user.username }} ({{ user.profile.get_role_display }})
           </span>
