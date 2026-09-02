@@ -5,6 +5,7 @@ from django.urls import reverse
 from apps.accounts.models import Profile
 
 from .models import Location, StaffLocationAssignment
+from .services import filter_locations
 
 
 class LocationModelTests(TestCase):
@@ -187,3 +188,20 @@ class LocationAccessFilteringTests(TestCase):
         ]
         self.assertIn("WH01", codes)
         self.assertNotIn("STORE01", codes)
+
+
+class LocationFilterTests(TestCase):
+    def setUp(self):
+        self.wh01 = Location.objects.create(name="Main Warehouse", code="WH01")
+        self.store01 = Location.objects.create(name="Store One", code="STORE01", is_active=False)
+
+    def test_search_by_code(self):
+        result = filter_locations(Location.objects.all(), {"q": "wh"})
+        self.assertIn(self.wh01, result)
+        self.assertNotIn(self.store01, result)
+
+    def test_filter_by_active_status(self):
+        result = filter_locations(Location.objects.all(), {"status": "inactive"})
+        self.assertIn(self.store01, result)
+        self.assertNotIn(self.wh01, result)
+        

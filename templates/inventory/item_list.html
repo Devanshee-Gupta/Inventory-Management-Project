@@ -11,6 +11,27 @@
   >
   {% endif %}
 </div>
+<form method="get" class="row g-2 mb-3 align-items-center">
+    <div class="col-auto">
+        <input type="text" name="q" value="{{ request.GET.q }}" class="form-control form-control-sm border-black" placeholder="Search SKU or name">
+    </div>
+    <div class="col-auto">
+        <select name="category" class="form-select form-select-sm border-black">
+            <option value="">All Categories</option>
+            {% for cat in categories_for_filter %}
+            <option value="{{ cat.pk }}" {% if request.GET.category == cat.pk|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto form-check mx-1">
+        <input type="checkbox" name="low_stock" value="true" id="lowStockCheck" class="form-check-input border-black" {% if request.GET.low_stock == "true" %}checked{% endif %}>
+        <label class="form-check-label" for="lowStockCheck">Low stock only</label>
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-outline-primary btn-sm">Filter</button>
+        <a href="{% url 'item-list' %}" class="btn btn-outline-secondary btn-sm">Reset</a>
+    </div>
+</form>
 <table class="table table-striped table-hover">
   <thead>
     <tr>
@@ -68,24 +89,15 @@
 
 {% if is_paginated %}
 <nav>
-  <ul class="pagination">
-    {% if page_obj.has_previous %}
-    <li class="page-item">
-      <a class="page-link" href="?page={{ page_obj.previous_page_number }}"
-        >Previous</a
-      >
-    </li>
-    {% endif %}
-    <li class="page-item disabled">
-      <span class="page-link"
-        >Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span
-      >
-    </li>
-    {% if page_obj.has_next %}
-    <li class="page-item">
-      <a class="page-link" href="?page={{ page_obj.next_page_number }}">Next</a>
-    </li>
-    {% endif %}
-  </ul>
+    <ul class="pagination">
+        {% if page_obj.has_previous %}
+            <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if querystring %}&{{ querystring }}{% endif %}">Previous</a></li>
+        {% endif %}
+        <li class="page-item disabled"><span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span></li>
+        {% if page_obj.has_next %}
+            <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if querystring %}&{{ querystring }}{% endif %}">Next</a></li>
+        {% endif %}
+    </ul>
 </nav>
-{% endif %} {% endblock %}
+{% endif %} 
+{% endblock %}
