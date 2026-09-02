@@ -23,7 +23,12 @@ from .forms import CategoryForm, ItemForm, AdjustmentForm, IssueForm, ReceiptFor
 from .models import Category, Item, StockMovement
 from .serializers import CategorySerializer, ItemSerializer, StockMovementSerializer
 from apps.locations.services import get_accessible_locations
-from .services import record_stock_movement
+from .services import (
+    calculate_item_stock,
+    calculate_item_stock_by_location,
+    is_below_reorder,
+    record_stock_movement,
+)
 
 
 # ---- Template views (server-rendered, Bootstrap) ----
@@ -83,7 +88,15 @@ class ItemListView(LoginRequiredMixin, ListView):
     context_object_name = "items"
     paginate_by = 20
     queryset = Item.objects.filter(is_archived=False).select_related("category")
-
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Computed per-item for the current page only (max `paginate_by` items,
+        # so this is a bounded number of extra queries, not N+1 over the whole table).
+        for item in context["items"]:
+            item.current_stock = calculate_item_stock(item)
+            item.below_reorder = is_below_reorder(item)
+        return context
 
 class ArchivedItemListView(ManagerRequiredMixin, ListView):
     """Manager-only screen — the one place archived items are browsable, for restoring."""
@@ -92,6 +105,12 @@ class ArchivedItemListView(ManagerRequiredMixin, ListView):
     context_object_name = "items"
     paginate_by = 20
     queryset = Item.objects.filter(is_archived=True).select_related("category")
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        for item in context["items"]:
+            item.current_stock = calculate_item_stock(item)
+        return context
 
 
 class ItemDetailView(LoginRequiredMixin, DetailView):
@@ -104,6 +123,20 @@ class ItemDetailView(LoginRequiredMixin, DetailView):
     model = Item
     template_name = "inventory/item_detail.html"
     context_object_name = "item"
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        item = self.object
+        context["current_stock"] = calculate_item_stock(item)
+        context["is_below_reorder"] = is_below_reorder(item)
+        # Rule 7 applies here too: Staff only see the breakdown for locations
+        # they're assigned to; Managers see every location.
+        accessible = get_accessible_locations(self.request.user)
+        context["location_breakdown"] = [
+            {"location": loc, "stock": calculate_item_stock_by_location(item, loc)}
+            for loc in accessible
+        ]
+        return context
 
 
 class ItemCreateView(ManagerRequiredMixin, CreateView):
@@ -182,6 +215,26 @@ class ItemViewSet(viewsets.ModelViewSet):
         item.is_archived = False
         item.save(update_fields=["is_archived", "updated_at"])
         return Response(ItemSerializer(item).data)
+    
+    @action(detail=True, methods=["get"])
+    def stock(self, request, pk=None):
+        item = self.get_object()
+        accessible = get_accessible_locations(request.user)
+        breakdown = [
+            {
+                "location_id": loc.pk,
+                "location_code": loc.code,
+                "quantity": calculate_item_stock_by_location(item, loc),
+            }
+            for loc in accessible
+        ]
+        return Response({
+            "item": item.sku,
+            "current_stock": calculate_item_stock(item),
+            "reorder_level": item.reorder_level,
+            "is_below_reorder": is_below_reorder(item),
+            "by_location": breakdown,
+        })
     
 
 # ---- Stock movement template views ----
@@ -316,3 +369,5 @@ class StockMovementViewSet(viewsets.ModelViewSet):
             | Q(source_location_id__in=accessible_ids)
             | Q(destination_location_id__in=accessible_ids)
         )
+        
+

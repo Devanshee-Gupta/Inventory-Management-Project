@@ -23,10 +23,31 @@
     <dd class="col-sm-9">{{ item.created_by.username }}</dd>
 </dl>
 
-<p class="text-muted">
-    Current stock and movement history will appear here once
-    <code>feature/ledger-calculation</code> and <code>feature/item-history</code> are built.
+<h5 class="mt-4">Current Stock</h5>
+<p>
+    Total: <strong>{{ current_stock }} {{ item.unit_of_measure }}</strong>
+    {% if is_below_reorder %}
+        <span class="badge bg-warning text-dark">Below Reorder Level ({{ item.reorder_level }})</span>
+    {% endif %}
 </p>
+
+<table class="table table-sm">
+    <thead><tr><th>Location</th><th>Stock</th></tr></thead>
+    <tbody>
+        {% for row in location_breakdown %}
+        <tr>
+            <td>{{ row.location.code }} — {{ row.location.name }}</td>
+            <td>{{ row.stock }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="2" class="text-center text-muted">No accessible locations.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<p class="text-muted">
+    Full movement timeline will appear here once <code>feature/item-history</code> is built.
+</p>   
 
 {% if user.profile.is_manager %}
     <a href="{% url 'item-update' item.pk %}" class="btn btn-outline-secondary btn-sm">Edit</a>

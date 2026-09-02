@@ -7,8 +7,12 @@ from apps.accounts.models import Profile
 from apps.locations.models import Location, StaffLocationAssignment
 from .models import Category, Item, StockMovement
 
-from .services import calculate_item_stock_by_location, record_stock_movement
-
+from .services import (
+    calculate_item_stock, 
+    calculate_item_stock_by_location, 
+    is_below_reorder, 
+    record_stock_movement
+)
 
 
 class CategoryModelTests(TestCase):
@@ -451,3 +455,111 @@ class MovementAPITests(TestCase):
         self.assertEqual(self.client.put(f"/api/movements/{movement_id}/", {}).status_code, 405)
         self.assertEqual(self.client.patch(f"/api/movements/{movement_id}/", {}).status_code, 405)
         self.assertEqual(self.client.delete(f"/api/movements/{movement_id}/").status_code, 405)
+
+
+
+class LedgerCalculationTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        self.item = Item.objects.create(
+            sku="ITM-1", name="Widget", unit_of_measure="PCS",
+            reorder_level=10, category=self.category, created_by=self.manager,
+        )
+        self.wh01 = Location.objects.create(name="Main Warehouse", code="WH01")
+        self.store01 = Location.objects.create(name="Store One", code="STORE01")
+        StaffLocationAssignment.objects.create(staff=self.staff, location=self.wh01)
+
+    def test_total_stock_matches_sum_of_per_location_stock(self):
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.RECEIPT, quantity=100, location=self.wh01, recorded_by=self.manager)
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.TRANSFER, quantity=30, source_location=self.wh01, destination_location=self.store01, recorded_by=self.manager)
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.ISSUE, quantity=20, location=self.wh01, recorded_by=self.manager)
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.ADJUSTMENT, quantity=5, location=self.store01, reason="count correction", adjustment_direction=StockMovement.AdjustmentDirection.DECREASE, recorded_by=self.manager)
+
+        direct_total = calculate_item_stock(self.item)
+        summed_total = sum(
+            calculate_item_stock_by_location(self.item, loc) for loc in Location.objects.all()
+        )
+        self.assertEqual(direct_total, summed_total)
+        # 100 receipt - 20 issue - 30 transferred out + 30 transferred in - 5 decrease = 75
+        self.assertEqual(direct_total, 75)
+
+    def test_transfers_do_not_change_total_stock(self):
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.RECEIPT, quantity=50, location=self.wh01, recorded_by=self.manager)
+        before = calculate_item_stock(self.item)
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.TRANSFER, quantity=20, source_location=self.wh01, destination_location=self.store01, recorded_by=self.manager)
+        after = calculate_item_stock(self.item)
+        self.assertEqual(before, after)
+
+    def test_is_below_reorder_true_when_at_or_under_threshold(self):
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.RECEIPT, quantity=10, location=self.wh01, recorded_by=self.manager)
+        self.assertTrue(is_below_reorder(self.item))  # 10 stock, reorder_level 10 -> "<=" is True
+
+    def test_is_below_reorder_false_when_above_threshold(self):
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.RECEIPT, quantity=15, location=self.wh01, recorded_by=self.manager)
+        self.assertFalse(is_below_reorder(self.item))
+
+    def test_zero_movements_means_zero_stock_and_below_reorder(self):
+        self.assertEqual(calculate_item_stock(self.item), 0)
+        self.assertTrue(is_below_reorder(self.item))  # 0 <= 10
+
+
+class ItemDetailStockViewTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        self.item = Item.objects.create(sku="ITM-1", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        self.wh01 = Location.objects.create(name="Main Warehouse", code="WH01")
+        self.store01 = Location.objects.create(name="Store One", code="STORE01")
+        StaffLocationAssignment.objects.create(staff=self.staff, location=self.wh01)
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.RECEIPT, quantity=40, location=self.wh01, recorded_by=self.manager)
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.RECEIPT, quantity=25, location=self.store01, recorded_by=self.manager)
+
+    def test_manager_sees_full_location_breakdown(self):
+        self.client.login(username="mgr", password="pass12345")
+        response = self.client.get(reverse("item-detail", args=[self.item.pk]))
+        self.assertContains(response, "WH01")
+        self.assertContains(response, "STORE01")
+        self.assertContains(response, "65")  # total stock
+
+    def test_staff_sees_only_assigned_location_in_breakdown(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(reverse("item-detail", args=[self.item.pk]))
+        self.assertContains(response, "WH01")
+        self.assertNotContains(response, "STORE01")
+
+
+class ItemStockAPITests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        self.item = Item.objects.create(sku="ITM-1", name="Widget", unit_of_measure="PCS", reorder_level=50, category=self.category, created_by=self.manager)
+        self.wh01 = Location.objects.create(name="Main Warehouse", code="WH01")
+        StaffLocationAssignment.objects.create(staff=self.staff, location=self.wh01)
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.RECEIPT, quantity=10, location=self.wh01, recorded_by=self.manager)
+
+    def test_stock_action_returns_expected_shape(self):
+        self.client.login(username="mgr", password="pass12345")
+        response = self.client.get(f"/api/items/{self.item.pk}/stock/")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["current_stock"], 10)
+        self.assertTrue(data["is_below_reorder"])  # 10 <= 50
+        self.assertEqual(len(data["by_location"]), 1)
+
+    def test_staff_can_call_stock_action_read_only(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(f"/api/items/{self.item.pk}/stock/")
+        self.assertEqual(response.status_code, 200)
