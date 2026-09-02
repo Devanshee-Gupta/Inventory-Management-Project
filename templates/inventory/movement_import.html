@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Import Stock Movements{% endblock %}
+{% block content %}
+<h3>Import Stock Movements from CSV</h3>
+<p class="text-muted">
+    Required columns: <code>sku, movement_type, quantity</code>. <code>movement_type</code> is one of
+    <code>RECEIPT</code>, <code>ISSUE</code>, <code>TRANSFER</code>, <code>ADJUSTMENT</code>.
+    Depending on type, also include: <code>location</code> (Receipt/Issue/Adjustment),
+    <code>source_location</code> + <code>destination_location</code> (Transfer),
+    <code>reason</code> + <code>adjustment_direction</code> (Adjustment, direction is <code>INCREASE</code> or <code>DECREASE</code>).
+    Location values are Location codes (e.g. <code>WH01</code>).
+</p>
+<p class="text-muted">
+    Every row is validated exactly like the manual forms — insufficient stock, a blank adjustment reason,
+    an archived item, or a location you don't have access to will cause that row to be skipped and reported,
+    not silently accepted.
+</p>
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div class="mb-3">
+        <input type="file" name="csv_file" accept=".csv" class="form-control" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Upload &amp; Import</button>
+    <a href="{% url 'movement-list' %}" class="btn btn-outline-secondary">Cancel</a>
+</form>
+{% endblock %}

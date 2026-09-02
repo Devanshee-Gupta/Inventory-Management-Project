@@ -1,7 +1,7 @@
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Sum
-
+from django.db.models import Q
 from apps.accounts.permissions import is_manager
 from apps.locations.services import get_accessible_locations
 
@@ -184,3 +184,21 @@ def apply_low_stock_filter(items):
     into a list, keeping only items where is_below_reorder() is True.
     """
     return [item for item in items if is_below_reorder(item)]
+
+
+def get_visible_movements(user):
+    """
+    Rule 7 applied to movement history. Single source of truth, used by
+    MovementListView, StockMovementViewSet, and MovementExportView alike.
+    """
+    qs = StockMovement.objects.select_related(
+        "item", "location", "source_location", "destination_location", "recorded_by"
+    )
+    if is_manager(user):
+        return qs
+    accessible_ids = set(get_accessible_locations(user).values_list("pk", flat=True))
+    return qs.filter(
+        Q(location_id__in=accessible_ids)
+        | Q(source_location_id__in=accessible_ids)
+        | Q(destination_location_id__in=accessible_ids)
+    )

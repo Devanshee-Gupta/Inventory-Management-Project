@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Import Items{% endblock %}
+{% block content %}
+<h3>Import Items from CSV</h3>
+<p class="text-muted">
+    Required columns: <code>sku, name, unit_of_measure, reorder_level, category</code>.
+    Optional: <code>description</code>. The <code>category</code> value must match an existing category name exactly (case-insensitive).
+    Rows with a SKU that already exists are skipped, not overwritten.
+</p>
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div class="mb-3">
+        <input type="file" name="csv_file" accept=".csv" class="form-control" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Upload &amp; Import</button>
+    <a href="{% url 'item-list' %}" class="btn btn-outline-secondary">Cancel</a>
+</form>
+{% endblock %}
