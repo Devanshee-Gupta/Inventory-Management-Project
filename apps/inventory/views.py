@@ -1,8 +1,13 @@
+from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.shortcuts import get_object_or_404, redirect
+from django.core.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError
+
+from django.db.models import Q
 from django.urls import reverse_lazy
 from django.views import View
-from django.views.generic import CreateView, DetailView, ListView, UpdateView
+from django.views.generic import CreateView, DetailView, FormView, ListView, UpdateView
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -14,13 +19,16 @@ from apps.accounts.permissions import (
     is_manager,
 )
 
-from .forms import CategoryForm, ItemForm
-from .models import Category, Item
-from .serializers import CategorySerializer, ItemSerializer
+from .forms import CategoryForm, ItemForm, AdjustmentForm, IssueForm, ReceiptForm, TransferForm
+from .models import Category, Item, StockMovement
+from .serializers import CategorySerializer, ItemSerializer, StockMovementSerializer
+from apps.locations.services import get_accessible_locations
+from .services import record_stock_movement
 
 
 # ---- Template views (server-rendered, Bootstrap) ----
 
+# ---- Category template views ----
 class CategoryListView(LoginRequiredMixin, ListView):
     model = Category
     template_name = "inventory/category_list.html"
@@ -174,3 +182,137 @@ class ItemViewSet(viewsets.ModelViewSet):
         item.is_archived = False
         item.save(update_fields=["is_archived", "updated_at"])
         return Response(ItemSerializer(item).data)
+    
+
+# ---- Stock movement template views ----
+
+class MovementListView(LoginRequiredMixin, ListView):
+    """Rule 7 applies to history too: Staff only see movements touching their locations."""
+    model = StockMovement
+    template_name = "inventory/movement_list.html"
+    context_object_name = "movements"
+    paginate_by = 30
+
+    def get_queryset(self):
+        qs = StockMovement.objects.select_related(
+            "item", "location", "source_location", "destination_location", "recorded_by"
+        )
+        if is_manager(self.request.user):
+            return qs
+        accessible_ids = set(get_accessible_locations(self.request.user).values_list("pk", flat=True))
+        return qs.filter(
+            Q(location_id__in=accessible_ids)
+            | Q(source_location_id__in=accessible_ids)
+            | Q(destination_location_id__in=accessible_ids)
+        )
+
+
+class BaseMovementCreateView(LoginRequiredMixin, FormView):
+    template_name = "inventory/movement_form.html"
+    success_url = reverse_lazy("movement-list")
+    movement_type = None
+    page_title = None
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = self.request.user
+        return kwargs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["page_title"] = self.page_title
+        return ctx
+
+    def build_movement_kwargs(self, form):
+        return {
+            "item": form.cleaned_data["item"],
+            "quantity": form.cleaned_data["quantity"],
+        }
+
+    def form_valid(self, form):
+        try:
+            record_stock_movement(
+                movement_type=self.movement_type,
+                recorded_by=self.request.user,
+                **self.build_movement_kwargs(form),
+            )
+        except (ValidationError, PermissionDenied) as exc:
+            form.add_error(None, str(exc))
+            return self.form_invalid(form)
+        messages.success(self.request, f"{self.page_title} recorded.")
+        return super().form_valid(form)
+
+
+class ReceiptCreateView(BaseMovementCreateView):
+    form_class = ReceiptForm
+    movement_type = StockMovement.MovementType.RECEIPT
+    page_title = "Receipt"
+
+    def build_movement_kwargs(self, form):
+        kwargs = super().build_movement_kwargs(form)
+        kwargs["location"] = form.cleaned_data["location"]
+        return kwargs
+
+
+class IssueCreateView(BaseMovementCreateView):
+    form_class = IssueForm
+    movement_type = StockMovement.MovementType.ISSUE
+    page_title = "Issue"
+
+    def build_movement_kwargs(self, form):
+        kwargs = super().build_movement_kwargs(form)
+        kwargs["location"] = form.cleaned_data["location"]
+        return kwargs
+
+
+class TransferCreateView(BaseMovementCreateView):
+    form_class = TransferForm
+    movement_type = StockMovement.MovementType.TRANSFER
+    page_title = "Transfer"
+
+    def build_movement_kwargs(self, form):
+        kwargs = super().build_movement_kwargs(form)
+        kwargs["source_location"] = form.cleaned_data["source_location"]
+        kwargs["destination_location"] = form.cleaned_data["destination_location"]
+        return kwargs
+
+
+class AdjustmentCreateView(ManagerRequiredMixin, BaseMovementCreateView):
+    form_class = AdjustmentForm
+    movement_type = StockMovement.MovementType.ADJUSTMENT
+    page_title = "Adjustment"
+
+    def build_movement_kwargs(self, form):
+        kwargs = super().build_movement_kwargs(form)
+        kwargs["location"] = form.cleaned_data["location"]
+        kwargs["adjustment_direction"] = form.cleaned_data["adjustment_direction"]
+        kwargs["reason"] = form.cleaned_data["reason"]
+        return kwargs
+
+
+# ---- DRF API (session-authenticated) ----
+
+class StockMovementViewSet(viewsets.ModelViewSet):
+    """
+    A single endpoint handling all four movement types via `movement_type`
+    in the payload — mirrors the template side exactly, both calling
+    record_stock_movement() as the only path that creates a row.
+
+    No PUT/PATCH/DELETE at all (Rule 2) — enforced here at the HTTP-method
+    level, on top of the model.save()/delete() guards as a second layer.
+    """
+    serializer_class = StockMovementSerializer
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_queryset(self):
+        qs = StockMovement.objects.select_related(
+            "item", "location", "source_location", "destination_location", "recorded_by"
+        )
+        if is_manager(self.request.user):
+            return qs
+        accessible_ids = set(get_accessible_locations(self.request.user).values_list("pk", flat=True))
+        return qs.filter(
+            Q(location_id__in=accessible_ids)
+            | Q(source_location_id__in=accessible_ids)
+            | Q(destination_location_id__in=accessible_ids)
+        )

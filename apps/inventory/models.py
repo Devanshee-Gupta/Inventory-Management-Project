@@ -44,3 +44,57 @@ class Item(models.Model):
 
     def __str__(self):
         return f"{self.sku} — {self.name}"
+    
+
+class StockMovement(models.Model):
+    class MovementType(models.TextChoices):
+        RECEIPT = "RECEIPT", "Receipt"
+        ISSUE = "ISSUE", "Issue"
+        TRANSFER = "TRANSFER", "Transfer"
+        ADJUSTMENT = "ADJUSTMENT", "Adjustment"
+
+    class AdjustmentDirection(models.TextChoices):
+        INCREASE = "INCREASE", "Increase"
+        DECREASE = "DECREASE", "Decrease"
+
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, related_name="movements")
+    movement_type = models.CharField(max_length=10, choices=MovementType.choices)
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+
+    location = models.ForeignKey(
+        "locations.Location", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="movements",
+    )
+    source_location = models.ForeignKey(
+        "locations.Location", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="outgoing_transfers",
+    )
+    destination_location = models.ForeignKey(
+        "locations.Location", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="incoming_transfers",
+    )
+    adjustment_direction = models.CharField(
+        max_length=10, choices=AdjustmentDirection.choices, null=True, blank=True
+    )
+    reason = models.TextField(blank=True)
+
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="movements_recorded")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.movement_type} · {self.item.sku} · {self.quantity}"
+
+    # ---- Rule 2: immutability enforced at the model layer, not just the view layer ----
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError(
+                "Stock movements are immutable and cannot be edited. "
+                "Only new movements may be appended."
+            )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Stock movements are immutable and cannot be deleted.")
