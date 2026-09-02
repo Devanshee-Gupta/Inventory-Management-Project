@@ -28,7 +28,9 @@ from .services import (
     calculate_item_stock_by_location,
     is_below_reorder,
     record_stock_movement,
+    apply_low_stock_filter,
 )
+from .filters import filter_categories, filter_items, filter_movements
 
 
 # ---- Template views (server-rendered, Bootstrap) ----
@@ -39,6 +41,14 @@ class CategoryListView(LoginRequiredMixin, ListView):
     template_name = "inventory/category_list.html"
     context_object_name = "categories"
     paginate_by = 20
+
+    def get_queryset(self):
+        return filter_categories(Category.objects.all(), self.request.GET)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["querystring"] = _querystring_without_page(self.request)
+        return context
 
 
 class CategoryCreateView(ManagerRequiredMixin, CreateView):
@@ -78,6 +88,10 @@ class CategoryViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
         
+    def get_queryset(self):
+        return filter_categories(Category.objects.all(), self.request.query_params)
+
+        
 
 # ---- Item template views ----
 
@@ -89,13 +103,21 @@ class ItemListView(LoginRequiredMixin, ListView):
     paginate_by = 20
     queryset = Item.objects.filter(is_archived=False).select_related("category")
     
+    def get_queryset(self):
+        qs = filter_items(
+            Item.objects.filter(is_archived=False).select_related("category"), self.request.GET
+        )
+        if self.request.GET.get("low_stock") == "true":
+            qs = apply_low_stock_filter(qs)  # materializes to a list — see design note
+        return qs
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        # Computed per-item for the current page only (max `paginate_by` items,
-        # so this is a bounded number of extra queries, not N+1 over the whole table).
         for item in context["items"]:
             item.current_stock = calculate_item_stock(item)
             item.below_reorder = is_below_reorder(item)
+        context["categories_for_filter"] = Category.objects.all()
+        context["querystring"] = _querystring_without_page(self.request)
         return context
 
 class ArchivedItemListView(ManagerRequiredMixin, ListView):
@@ -195,13 +217,18 @@ class ItemViewSet(viewsets.ModelViewSet):
         qs = Item.objects.select_related("category", "created_by")
         if self.action == "list":
             if self.request.query_params.get("archived") == "true" and is_manager(self.request.user):
-                return qs.filter(is_archived=True)
-            return qs.filter(is_archived=False)
+                qs = qs.filter(is_archived=True)
+            else:
+                qs = qs.filter(is_archived=False)
+            qs = filter_items(qs, self.request.query_params)
+            if self.request.query_params.get("low_stock") == "true":
+                qs = apply_low_stock_filter(qs)
+            return qs
         return qs
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
-
+    
     @action(detail=True, methods=["post"], permission_classes=[IsManager])
     def archive(self, request, pk=None):
         item = self.get_object()
@@ -251,14 +278,23 @@ class MovementListView(LoginRequiredMixin, ListView):
             "item", "location", "source_location", "destination_location", "recorded_by"
         )
         if is_manager(self.request.user):
-            return qs
-        accessible_ids = set(get_accessible_locations(self.request.user).values_list("pk", flat=True))
-        return qs.filter(
-            Q(location_id__in=accessible_ids)
-            | Q(source_location_id__in=accessible_ids)
-            | Q(destination_location_id__in=accessible_ids)
-        )
+            pass  # Manager: no location restriction
+        else:
+            accessible_ids = set(get_accessible_locations(self.request.user).values_list("pk", flat=True))
+            qs = qs.filter(
+                Q(location_id__in=accessible_ids)
+                | Q(source_location_id__in=accessible_ids)
+                | Q(destination_location_id__in=accessible_ids)
+            )
+        return filter_movements(qs, self.request.GET)
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["items_for_filter"] = Item.objects.all().order_by("sku")
+        context["movement_types"] = StockMovement.MovementType.choices
+        context["locations_for_filter"] = get_accessible_locations(self.request.user)
+        context["querystring"] = _querystring_without_page(self.request)
+        return context
 
 class BaseMovementCreateView(LoginRequiredMixin, FormView):
     template_name = "inventory/movement_form.html"
@@ -361,13 +397,19 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         qs = StockMovement.objects.select_related(
             "item", "location", "source_location", "destination_location", "recorded_by"
         )
-        if is_manager(self.request.user):
-            return qs
-        accessible_ids = set(get_accessible_locations(self.request.user).values_list("pk", flat=True))
-        return qs.filter(
-            Q(location_id__in=accessible_ids)
-            | Q(source_location_id__in=accessible_ids)
-            | Q(destination_location_id__in=accessible_ids)
-        )
+        if not is_manager(self.request.user):
+            accessible_ids = set(get_accessible_locations(self.request.user).values_list("pk", flat=True))
+            qs = qs.filter(
+                Q(location_id__in=accessible_ids)
+                | Q(source_location_id__in=accessible_ids)
+                | Q(destination_location_id__in=accessible_ids)
+            )
+        return filter_movements(qs, self.request.query_params)
         
+
+def _querystring_without_page(request):
+    """Shared helper: preserves active filters when a pagination link is clicked."""
+    params = request.GET.copy()
+    params.pop("page", None)
+    return params.urlencode()
 

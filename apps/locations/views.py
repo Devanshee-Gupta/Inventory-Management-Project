@@ -8,7 +8,8 @@ from apps.accounts.permissions import IsManager, IsManagerOrReadOnly, ManagerReq
 from .forms import AssignmentForm, LocationForm
 from .models import Location, StaffLocationAssignment
 from .serializers import AssignmentSerializer, LocationSerializer
-from .services import get_accessible_locations
+from .services import filter_locations, get_accessible_locations
+
 
 
 # ---- Location template views ----
@@ -18,10 +19,17 @@ class LocationListView(LoginRequiredMixin, ListView):
     template_name = "locations/location_list.html"
     context_object_name = "locations"
     paginate_by = 20
-
+    
     def get_queryset(self):
         # Rule 7 enforced here: Manager -> all, Staff -> assigned only.
-        return get_accessible_locations(self.request.user)
+        return filter_locations(get_accessible_locations(self.request.user), self.request.GET)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        params = self.request.GET.copy()
+        params.pop("page", None)
+        context["querystring"] = params.urlencode()
+        return context
 
 
 class LocationCreateView(ManagerRequiredMixin, CreateView):
@@ -71,7 +79,7 @@ class LocationViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "put", "patch", "head", "options"]
 
     def get_queryset(self):
-        return get_accessible_locations(self.request.user)
+        return filter_locations(get_accessible_locations(self.request.user), self.request.query_params)
 
 
 class AssignmentViewSet(viewsets.ModelViewSet):

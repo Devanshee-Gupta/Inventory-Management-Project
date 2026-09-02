@@ -175,3 +175,12 @@ def is_below_reorder(item):
     itself, it just answers the question at read-time.
     """
     return calculate_item_stock(item) <= item.reorder_level
+
+
+def apply_low_stock_filter(items):
+    """
+    See the branch-level design note: stock isn't stored (Rule 1), so this
+    can't be a queryset filter. Materializes the already-filtered queryset
+    into a list, keeping only items where is_below_reorder() is True.
+    """
+    return [item for item in items if is_below_reorder(item)]

@@ -6,12 +6,14 @@ from django.urls import reverse
 from apps.accounts.models import Profile
 from apps.locations.models import Location, StaffLocationAssignment
 from .models import Category, Item, StockMovement
+from .filters import filter_categories, filter_items, filter_movements
 
 from .services import (
     calculate_item_stock, 
     calculate_item_stock_by_location, 
     is_below_reorder, 
-    record_stock_movement
+    record_stock_movement,
+    apply_low_stock_filter,
 )
 
 
@@ -563,3 +565,108 @@ class ItemStockAPITests(TestCase):
         self.client.login(username="stf", password="pass12345")
         response = self.client.get(f"/api/items/{self.item.pk}/stock/")
         self.assertEqual(response.status_code, 200)
+    
+
+
+class ItemFilterTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+
+        self.electronics = Category.objects.create(name="Electronics", created_by=self.manager)
+        self.tools = Category.objects.create(name="Tools", created_by=self.manager)
+
+        self.widget = Item.objects.create(sku="WID-001", name="Blue Widget", unit_of_measure="PCS", reorder_level=10, category=self.electronics, created_by=self.manager)
+        self.hammer = Item.objects.create(sku="HAM-001", name="Claw Hammer", unit_of_measure="PCS", reorder_level=5, category=self.tools, created_by=self.manager)
+
+    def test_search_matches_sku(self):
+        result = filter_items(Item.objects.all(), {"q": "WID"})
+        self.assertIn(self.widget, result)
+        self.assertNotIn(self.hammer, result)
+
+    def test_search_matches_name_case_insensitive(self):
+        result = filter_items(Item.objects.all(), {"q": "blue"})
+        self.assertIn(self.widget, result)
+
+    def test_filter_by_category(self):
+        result = filter_items(Item.objects.all(), {"category": str(self.tools.pk)})
+        self.assertIn(self.hammer, result)
+        self.assertNotIn(self.widget, result)
+
+    def test_low_stock_filter_only_keeps_items_at_or_under_reorder(self):
+        # widget: 0 stock, reorder_level 10 -> below.  hammer: 0 stock, reorder_level 5 -> below.
+        # Give the hammer enough stock to clear its threshold.
+        Location.objects.create(name="WH", code="WH01")
+        from apps.locations.models import Location as LocationModel
+        wh = LocationModel.objects.get(code="WH01")
+        from .services import record_stock_movement
+        record_stock_movement(item=self.hammer, movement_type=StockMovement.MovementType.RECEIPT, quantity=20, location=wh, recorded_by=self.manager)
+
+        result = apply_low_stock_filter(Item.objects.all())
+        self.assertIn(self.widget, result)
+        self.assertNotIn(self.hammer, result)
+
+
+class CategoryFilterTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        Category.objects.create(name="Electronics", created_by=self.manager)
+        Category.objects.create(name="Tools", created_by=self.manager)
+
+    def test_search_by_name(self):
+        result = filter_categories(Category.objects.all(), {"q": "elect"})
+        names = [c.name for c in result]
+        self.assertEqual(names, ["Electronics"])
+
+
+class MovementFilterTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        self.item = Item.objects.create(sku="ITM-1", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        from apps.locations.models import Location
+        self.wh01 = Location.objects.create(name="Main Warehouse", code="WH01")
+        self.store01 = Location.objects.create(name="Store One", code="STORE01")
+        from .services import record_stock_movement
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.RECEIPT, quantity=10, location=self.wh01, recorded_by=self.manager)
+        record_stock_movement(item=self.item, movement_type=StockMovement.MovementType.ISSUE, quantity=2, location=self.wh01, recorded_by=self.manager)
+
+    def test_filter_by_movement_type(self):
+        result = filter_movements(StockMovement.objects.all(), {"movement_type": "ISSUE"})
+        self.assertEqual(result.count(), 1)
+        self.assertEqual(result.first().movement_type, "ISSUE")
+
+    def test_filter_by_location_matches_any_of_three_fields(self):
+        result = filter_movements(StockMovement.objects.all(), {"location": str(self.wh01.pk)})
+        self.assertEqual(result.count(), 2)
+
+    def test_invalid_date_is_ignored_not_crashed(self):
+        result = filter_movements(StockMovement.objects.all(), {"date_from": "not-a-date"})
+        self.assertEqual(result.count(), 2)  # filter silently skipped, nothing excluded
+
+
+class ItemListViewFilterTests(TestCase):
+    def setUp(self):
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        Item.objects.create(sku="ABC-1", name="Alpha", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        Item.objects.create(sku="XYZ-1", name="Zulu", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+
+    def test_search_query_param_filters_list(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(reverse("item-list"), {"q": "ABC"})
+        self.assertContains(response, "ABC-1")
+        self.assertNotContains(response, "XYZ-1")
+
+    def test_pagination_link_preserves_filter(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(reverse("item-list"), {"q": "A"})
+        self.assertIn("q=A", response.context["querystring"])
