@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Movement History{% endblock %}
+{% block content %}
+<h3>Stock Movement History</h3>
+<p class="text-muted">Every row here is permanent — movements can never be edited or deleted.</p>
+
+<table class="table table-striped table-hover table-sm">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Item</th>
+            <th>Qty</th>
+            <th>Location(s)</th>
+            <th>Reason</th>
+            <th>Recorded By</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for m in movements %}
+        <tr>
+            <td>{{ m.created_at|date:"d M Y H:i" }}</td>
+            <td><span class="badge bg-secondary">{{ m.get_movement_type_display }}</span></td>
+            <td>{{ m.item.sku }}</td>
+            <td>{{ m.quantity }}</td>
+            <td>
+                {% if m.movement_type == "TRANSFER" %}
+                    {{ m.source_location.code }} → {{ m.destination_location.code }}
+                {% else %}
+                    {{ m.location.code|default:"—" }}
+                    {% if m.movement_type == "ADJUSTMENT" %}({{ m.get_adjustment_direction_display }}){% endif %}
+                {% endif %}
+            </td>
+            <td>{{ m.reason|default:"—" }}</td>
+            <td>{{ m.recorded_by.username }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center text-muted">No movements recorded yet.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if is_paginated %}
+<nav>
+    <ul class="pagination">
+        {% if page_obj.has_previous %}
+            <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}">Previous</a></li>
+        {% endif %}
+        <li class="page-item disabled"><span class="page-link">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span></li>
+        {% if page_obj.has_next %}
+            <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}">Next</a></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+{% endblock %}
