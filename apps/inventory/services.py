@@ -138,3 +138,40 @@ def record_stock_movement(
         )
 
     return movement
+
+
+def calculate_item_stock(item):
+    """
+    Total stock across ALL locations for this item.
+    Rule 1: computed at read-time from the ledger, never stored.
+
+    Transfers are intentionally excluded from this formula — see the
+    branch-level design note for why they net to zero company-wide.
+    """
+    movements = StockMovement.objects.filter(item=item)
+
+    def total(**filters):
+        return movements.filter(**filters).aggregate(total=Sum("quantity"))["total"] or 0
+
+    receipts = total(movement_type=StockMovement.MovementType.RECEIPT)
+    issues = total(movement_type=StockMovement.MovementType.ISSUE)
+    increase_adjustments = total(
+        movement_type=StockMovement.MovementType.ADJUSTMENT,
+        adjustment_direction=StockMovement.AdjustmentDirection.INCREASE,
+    )
+    decrease_adjustments = total(
+        movement_type=StockMovement.MovementType.ADJUSTMENT,
+        adjustment_direction=StockMovement.AdjustmentDirection.DECREASE,
+    )
+
+    return receipts - issues + increase_adjustments - decrease_adjustments
+
+
+def is_below_reorder(item):
+    """
+    Rule (Low Stock Alerts section): alert condition is current_stock <= reorder_level.
+    is_below_reorder() is the boolean primitive that STEP 13's alert system
+    will be built on top of — it does not create or touch any alert record
+    itself, it just answers the question at read-time.
+    """
+    return calculate_item_stock(item) <= item.reorder_level
