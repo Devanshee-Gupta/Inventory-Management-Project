@@ -20,5 +20,10 @@ urlpatterns = [
     path("movements/issue/", views.IssueCreateView.as_view(), name="movement-issue"),
     path("movements/transfer/", views.TransferCreateView.as_view(), name="movement-transfer"),
     path("movements/adjustment/", views.AdjustmentCreateView.as_view(), name="movement-adjustment"),
+    
+    path("items/export/", views.ItemExportView.as_view(), name="item-export"),
+    path("items/import/", views.ItemImportView.as_view(), name="item-import"),
+    path("movements/export/", views.MovementExportView.as_view(), name="movement-export"),
+    path("movements/import/", views.MovementImportView.as_view(), name="movement-import"),
 
 ]

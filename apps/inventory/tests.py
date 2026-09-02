@@ -16,6 +16,9 @@ from .services import (
     apply_low_stock_filter,
 )
 
+import io
+from django.core.files.uploadedfile import SimpleUploadedFile
+
 
 class CategoryModelTests(TestCase):
     def setUp(self):
@@ -670,3 +673,124 @@ class ItemListViewFilterTests(TestCase):
         self.client.login(username="stf", password="pass12345")
         response = self.client.get(reverse("item-list"), {"q": "A"})
         self.assertIn("q=A", response.context["querystring"])
+        
+
+class ItemExportTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        Item.objects.create(sku="ITM-1", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+
+    def test_export_returns_csv_with_header_and_row(self):
+        self.client.login(username="mgr", password="pass12345")
+        response = self.client.get(reverse("item-export"))
+        self.assertEqual(response["Content-Type"], "text/csv")
+        content = response.content.decode()
+        self.assertIn("sku,name", content)
+        self.assertIn("ITM-1", content)
+
+    def test_export_respects_category_filter(self):
+        tools = Category.objects.create(name="Tools", created_by=self.manager)
+        Item.objects.create(sku="TL-1", name="Hammer", unit_of_measure="PCS", category=tools, created_by=self.manager)
+        self.client.login(username="mgr", password="pass12345")
+        response = self.client.get(reverse("item-export"), {"category": str(tools.pk)})
+        content = response.content.decode()
+        self.assertIn("TL-1", content)
+        self.assertNotIn("ITM-1", content)
+
+
+class ItemImportTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+
+    def _csv(self, rows):
+        header = "sku,name,unit_of_measure,reorder_level,category,description\n"
+        body = "\n".join(rows)
+        return SimpleUploadedFile("items.csv", (header + body).encode(), content_type="text/csv")
+
+    def test_staff_cannot_import(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(reverse("item-import"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_manager_import_creates_items(self):
+        self.client.login(username="mgr", password="pass12345")
+        upload = self._csv(["NEW-1,New Widget,PCS,5,Electronics,"])
+        self.client.post(reverse("item-import"), {"csv_file": upload})
+        self.assertTrue(Item.objects.filter(sku="NEW-1").exists())
+
+    def test_duplicate_sku_is_skipped_not_overwritten(self):
+        Item.objects.create(sku="DUP-1", name="Original", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        self.client.login(username="mgr", password="pass12345")
+        upload = self._csv(["DUP-1,Renamed,PCS,5,Electronics,"])
+        self.client.post(reverse("item-import"), {"csv_file": upload})
+        self.assertEqual(Item.objects.get(sku="DUP-1").name, "Original")
+
+    def test_unknown_category_reported_as_error_not_crash(self):
+        self.client.login(username="mgr", password="pass12345")
+        upload = self._csv(["ERR-1,Bad Widget,PCS,5,NoSuchCategory,"])
+        response = self.client.post(reverse("item-import"), {"csv_file": upload}, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Item.objects.filter(sku="ERR-1").exists())
+
+
+class MovementImportTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+
+        from apps.locations.models import Location, StaffLocationAssignment
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        self.item = Item.objects.create(sku="ITM-1", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        self.wh01 = Location.objects.create(name="Main Warehouse", code="WH01")
+        self.store01 = Location.objects.create(name="Store One", code="STORE01")
+        StaffLocationAssignment.objects.create(staff=self.staff, location=self.wh01)
+
+    def _csv(self, rows):
+        header = "sku,movement_type,quantity,location,source_location,destination_location,reason,adjustment_direction\n"
+        body = "\n".join(rows)
+        return SimpleUploadedFile("movements.csv", (header + body).encode(), content_type="text/csv")
+
+    def test_valid_receipt_row_creates_movement(self):
+        self.client.login(username="mgr", password="pass12345")
+        upload = self._csv(["ITM-1,RECEIPT,50,WH01,,,,"])
+        self.client.post(reverse("movement-import"), {"csv_file": upload})
+        self.assertEqual(StockMovement.objects.filter(item=self.item, movement_type="RECEIPT").count(), 1)
+
+    def test_insufficient_stock_row_is_rejected_not_crashed(self):
+        self.client.login(username="mgr", password="pass12345")
+        upload = self._csv(["ITM-1,ISSUE,999,WH01,,,,"])
+        response = self.client.post(reverse("movement-import"), {"csv_file": upload}, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_staff_adjustment_row_rejected_receipt_row_accepted_same_file(self):
+        self.client.login(username="stf", password="pass12345")
+        upload = self._csv([
+            "ITM-1,RECEIPT,20,WH01,,,,",
+            "ITM-1,ADJUSTMENT,5,WH01,,,found extra,INCREASE",
+        ])
+        self.client.post(reverse("movement-import"), {"csv_file": upload})
+        self.assertEqual(StockMovement.objects.filter(movement_type="RECEIPT").count(), 1)
+        self.assertEqual(StockMovement.objects.filter(movement_type="ADJUSTMENT").count(), 0)
+
+    def test_staff_row_for_unassigned_location_rejected(self):
+        self.client.login(username="stf", password="pass12345")
+        upload = self._csv(["ITM-1,RECEIPT,20,STORE01,,,,"])  # staff not assigned to STORE01
+        self.client.post(reverse("movement-import"), {"csv_file": upload})
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_unknown_sku_reported_as_error(self):
+        self.client.login(username="mgr", password="pass12345")
+        upload = self._csv(["NOPE-1,RECEIPT,10,WH01,,,,"])
+        response = self.client.post(reverse("movement-import"), {"csv_file": upload}, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(StockMovement.objects.count(), 0)

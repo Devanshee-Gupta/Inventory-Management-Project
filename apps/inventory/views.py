@@ -1,8 +1,16 @@
+import csv
+import io
+
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.shortcuts import get_object_or_404, redirect
 from django.core.exceptions import PermissionDenied, ValidationError
 from rest_framework.exceptions import ValidationError as DRFValidationError
+
+from django.http import HttpResponse
+from django.shortcuts import redirect, render
+
+from apps.locations.models import Location
 
 from django.db.models import Q
 from django.urls import reverse_lazy
@@ -26,6 +34,7 @@ from apps.locations.services import get_accessible_locations
 from .services import (
     calculate_item_stock,
     calculate_item_stock_by_location,
+    get_visible_movements,
     is_below_reorder,
     record_stock_movement,
     apply_low_stock_filter,
@@ -274,19 +283,7 @@ class MovementListView(LoginRequiredMixin, ListView):
     paginate_by = 30
 
     def get_queryset(self):
-        qs = StockMovement.objects.select_related(
-            "item", "location", "source_location", "destination_location", "recorded_by"
-        )
-        if is_manager(self.request.user):
-            pass  # Manager: no location restriction
-        else:
-            accessible_ids = set(get_accessible_locations(self.request.user).values_list("pk", flat=True))
-            qs = qs.filter(
-                Q(location_id__in=accessible_ids)
-                | Q(source_location_id__in=accessible_ids)
-                | Q(destination_location_id__in=accessible_ids)
-            )
-        return filter_movements(qs, self.request.GET)
+        return filter_movements(get_visible_movements(self.request.user), self.request.GET)  # or .query_params for the API
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -394,17 +391,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
-        qs = StockMovement.objects.select_related(
-            "item", "location", "source_location", "destination_location", "recorded_by"
-        )
-        if not is_manager(self.request.user):
-            accessible_ids = set(get_accessible_locations(self.request.user).values_list("pk", flat=True))
-            qs = qs.filter(
-                Q(location_id__in=accessible_ids)
-                | Q(source_location_id__in=accessible_ids)
-                | Q(destination_location_id__in=accessible_ids)
-            )
-        return filter_movements(qs, self.request.query_params)
+        return filter_movements(get_visible_movements(self.request.user), self.request.GET)  # or .query_params for the API
         
 
 def _querystring_without_page(request):
@@ -413,3 +400,174 @@ def _querystring_without_page(request):
     params.pop("page", None)
     return params.urlencode()
 
+
+
+# ---- Export ----
+
+class ItemExportView(LoginRequiredMixin, View):
+    """Respects the exact same filters as /items/ — export what you're looking at."""
+
+    def get(self, request):
+        items = filter_items(
+            Item.objects.filter(is_archived=False).select_related("category"), request.GET
+        )
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="items.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["sku", "name", "description", "unit_of_measure", "reorder_level", "category", "current_stock"])
+        for item in items:
+            writer.writerow([
+                item.sku, item.name, item.description, item.unit_of_measure,
+                item.reorder_level, item.category.name, calculate_item_stock(item),
+            ])
+        return response
+
+
+class MovementExportView(LoginRequiredMixin, View):
+    """Respects Rule 7 (via get_visible_movements) and the same filters as /movements/."""
+
+    def get(self, request):
+        movements = filter_movements(get_visible_movements(request.user), request.GET)
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="stock_movements.csv"'
+        writer = csv.writer(response)
+        writer.writerow([
+            "created_at", "movement_type", "sku", "quantity", "location",
+            "source_location", "destination_location", "adjustment_direction", "reason", "recorded_by",
+        ])
+        for m in movements:
+            writer.writerow([
+                m.created_at.isoformat(), m.movement_type, m.item.sku, m.quantity,
+                m.location.code if m.location else "",
+                m.source_location.code if m.source_location else "",
+                m.destination_location.code if m.destination_location else "",
+                m.adjustment_direction or "", m.reason, m.recorded_by.username,
+            ])
+        return response
+
+
+# ---- Import ----
+
+class ItemImportView(ManagerRequiredMixin, View):
+    template_name = "inventory/item_import.html"
+
+    def get(self, request):
+        return render(request, self.template_name)
+
+    def post(self, request):
+        upload = request.FILES.get("csv_file")
+        if not upload:
+            messages.error(request, "Please choose a CSV file.")
+            return redirect("item-import")
+
+        try:
+            decoded = upload.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            messages.error(request, "Could not read the file — please upload a UTF-8 encoded CSV.")
+            return redirect("item-import")
+
+        reader = csv.DictReader(io.StringIO(decoded))
+        required = {"sku", "name", "unit_of_measure", "reorder_level", "category"}
+        if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
+            messages.error(request, f"CSV must include columns: {', '.join(sorted(required))}")
+            return redirect("item-import")
+
+        created, skipped, errors = 0, 0, []
+        for row_num, row in enumerate(reader, start=2):  # row 1 is the header
+            sku = (row.get("sku") or "").strip().upper()
+            name = (row.get("name") or "").strip()
+            category_name = (row.get("category") or "").strip()
+            try:
+                if not sku or not name or not category_name:
+                    raise ValueError("sku, name, and category are required.")
+                if Item.objects.filter(sku=sku).exists():
+                    skipped += 1
+                    continue
+                category = Category.objects.get(name__iexact=category_name)
+                reorder_level = int(row.get("reorder_level") or 0)
+                if reorder_level < 0:
+                    raise ValueError("reorder_level cannot be negative.")
+                Item.objects.create(
+                    sku=sku, name=name,
+                    description=(row.get("description") or "").strip(),
+                    unit_of_measure=(row.get("unit_of_measure") or "").strip(),
+                    reorder_level=reorder_level, category=category, created_by=request.user,
+                )
+                created += 1
+            except Category.DoesNotExist:
+                errors.append(f"Row {row_num}: category '{category_name}' does not exist.")
+            except (ValueError, TypeError) as exc:
+                errors.append(f"Row {row_num}: {exc}")
+
+        messages.success(request, f"Import finished: {created} created, {skipped} skipped (duplicate SKU), {len(errors)} errors.")
+        for err in errors[:20]:
+            messages.warning(request, err)
+        return redirect("item-list")
+
+
+class MovementImportView(LoginRequiredMixin, View):
+    """
+    Manager AND Staff can access this screen — exactly like the manual
+    Receipt/Issue/Transfer forms. Adjustment rows from a Staff upload are
+    rejected per-row by record_stock_movement() itself, the same guard
+    used everywhere else; there is no separate check needed here.
+    """
+    template_name = "inventory/movement_import.html"
+
+    def get(self, request):
+        return render(request, self.template_name)
+
+    def post(self, request):
+        upload = request.FILES.get("csv_file")
+        if not upload:
+            messages.error(request, "Please choose a CSV file.")
+            return redirect("movement-import")
+
+        try:
+            decoded = upload.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            messages.error(request, "Could not read the file — please upload a UTF-8 encoded CSV.")
+            return redirect("movement-import")
+
+        reader = csv.DictReader(io.StringIO(decoded))
+        required = {"sku", "movement_type", "quantity"}
+        if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
+            messages.error(request, f"CSV must include columns: {', '.join(sorted(required))}")
+            return redirect("movement-import")
+
+        def get_location(code):
+            code = (code or "").strip().upper()
+            return Location.objects.get(code=code) if code else None
+
+        created, errors = 0, []
+        for row_num, row in enumerate(reader, start=2):
+            sku = (row.get("sku") or "").strip().upper()
+            try:
+                item = Item.objects.get(sku=sku)
+                movement_type = (row.get("movement_type") or "").strip().upper()
+                quantity = int(row.get("quantity") or 0)
+                record_stock_movement(
+                    item=item,
+                    movement_type=movement_type,
+                    quantity=quantity,
+                    recorded_by=request.user,
+                    location=get_location(row.get("location")),
+                    source_location=get_location(row.get("source_location")),
+                    destination_location=get_location(row.get("destination_location")),
+                    reason=(row.get("reason") or "").strip(),
+                    adjustment_direction=(row.get("adjustment_direction") or "").strip().upper() or None,
+                )
+                created += 1
+            except Item.DoesNotExist:
+                errors.append(f"Row {row_num}: item SKU '{sku}' not found.")
+            except Location.DoesNotExist:
+                errors.append(f"Row {row_num}: a location code in this row does not exist.")
+            except (ValidationError, PermissionDenied) as exc:
+                errors.append(f"Row {row_num}: {exc}")
+            except (ValueError, TypeError):
+                errors.append(f"Row {row_num}: quantity must be a whole number.")
+
+        messages.success(request, f"Import finished: {created} movements recorded, {len(errors)} errors.")
+        for err in errors[:20]:
+            messages.warning(request, err)
+        return redirect("movement-list")
