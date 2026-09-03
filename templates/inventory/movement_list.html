@@ -61,7 +61,7 @@
         {% for m in movements %}
         <tr>
             <td>{{ m.created_at|date:"d M Y H:i" }}</td>
-            <td><span class="badge bg-secondary">{{ m.get_movement_type_display }}</span></td>
+            <td><span class="badge bg-secondary">{{ m.get_movement_type_display|default:m.movement_type }}</span></td>
             <td>{{ m.item.sku }}</td>
             <td>{{ m.quantity }}</td>
             <td>

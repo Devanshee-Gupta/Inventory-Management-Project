@@ -6,7 +6,7 @@ from apps.inventory.models import Category, Item
 from apps.inventory.services import calculate_item_stock, get_visible_movements, is_below_reorder
 from apps.locations.models import Location
 from apps.locations.services import get_accessible_locations
-
+from apps.alerts.services import get_active_alerts
 
 class DashboardView(LoginRequiredMixin, TemplateView):
     template_name = "dashboard/dashboard.html"
@@ -30,6 +30,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             context["total_categories"] = Category.objects.count()
             context["total_locations"] = Location.objects.filter(is_active=True).count()
             context["archived_items_count"] = Item.objects.filter(is_archived=True).count()
+            context["active_alert_count"] = get_active_alerts().count()
 
         # Rule 1 consequence, same trade-off documented in STEP 9: no stored
         # stock column means this has to be computed per item, live. Fine at
