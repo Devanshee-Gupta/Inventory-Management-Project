@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Remove Assignment{% endblock %}
+{% block content %}
+<h3>Remove Staff Assignment</h3>
+<p>
+    Remove <strong>{{ object.staff.username }}</strong>'s access to
+    <strong>{{ object.location.code }} — {{ object.location.name }}</strong>?
+</p>
+<form method="post">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-danger">Remove</button>
+    <a href="{% url 'assignment-list' %}" class="btn btn-outline-secondary">Cancel</a>
+</form>
+{% endblock %}

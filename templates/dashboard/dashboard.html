@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h3>Dashboard</h3>
+<p class="text-muted">Welcome, {{ user.username }} ({{ user.profile.get_role_display }})</p>
+
+<div class="row g-3 mb-4 justify-content-center">
+    <div class="col-sm-6 col-md-2">
+        <div class="card text-center shadow">
+            <div class="card-body">
+                <div class="fs-3">{{ total_items }}</div>
+                <div class="text-muted small">Active Items</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-md-2">
+        <div class="card text-center shadow">
+            <div class="card-body">
+                <div class="fs-3">{{ accessible_location_count }}</div>
+                <div class="text-muted small">{% if is_manager %}Locations{% else %}Your Locations{% endif %}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-md-2">
+        <div class="card text-center shadow">
+            <div class="card-body">
+                <div class="fs-3">{{ low_stock_count }}</div>
+                <div class="text-muted small">Low Stock Items</div>
+            </div>
+        </div>
+    </div>
+    
+    {% if is_manager %}
+    <div class="col-sm-6 col-md-2">
+        <div class="card text-center shadow">
+            <div class="card-body">
+                <div class="fs-3">{{ archived_items_count }}</div>
+                <div class="text-muted small">Archived Items</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if is_manager %}
+        <div class="col-sm-6 col-md-2">
+            <div class="card text-center shadow">
+                <div class="card-body">
+                    <div class="fs-3">{{ active_alert_count }}</div>
+                    <div class="text-muted small">
+                        <a href="{% url 'alert-list' %}" class="nav-link"
+                        style="--bs-nav-link-hover-color: #b75c12;">Open Alerts &#x2192;</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+<div class="row g-4 justify-content-evenly mb-4">
+    <div class="col-md-5 card px-md-3 py-md-4 shadow">
+        <h5 class="text-center">Low Stock Items</h5>
+        <table class="inline-block table table-sm bg-dark text-light text-center mt-3">
+            <thead><tr><th>SKU</th><th>Name</th><th>Reorder Level</th></tr></thead>
+            <tbody>
+                {% for item in low_stock_items %}
+                <tr>
+                    <td><a href="{% url 'item-detail' item.pk %}" class="badge text-dark nav-link">{{ item.sku }}</a></td>
+                    <td>{{ item.name }}</td>
+                    <td>{{ item.reorder_level }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="3" class="text-center text-muted">Nothing below reorder level.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if low_stock_count > 5 %}
+            <a href="{% url 'item-list' %}?low_stock=true">View all {{ low_stock_count }} low stock items →</a>
+        {% endif %}
+    </div>
+
+    <div class="col-md-6 inline-block card px-md-3 py-md-4 shadow">
+        <h5 class="text-center">Recent Stock Activity</h5>
+        <table class="inline-block table table-sm bg-dark text-light text-center mt-3">
+            <thead><tr><th>Date</th><th>Type</th><th>Item</th><th>Qty</th></tr></thead>
+            <tbody>
+                {% for m in recent_movements %}
+                <tr>
+                    <td>{{ m.created_at|date:"d M, H:i" }}</td>
+                    <td>
+                        {% if m.get_movement_type_display == 'Receipt' %}
+                        <span 
+                        class="badge text-dark bg-primary-subtle border border-dark-subtle"
+                        >{{ m.get_movement_type_display }}</span>
+                        {% endif %}
+                        {% if m.get_movement_type_display == 'Issue' %}
+                        <span 
+                        class="badge text-dark bg-danger-subtle border border-dark-subtle"
+                        >{{ m.get_movement_type_display }}</span>
+                        {% endif %}
+                        {% if m.get_movement_type_display == 'Transfer' %}
+                        <span 
+                        class="badge text-dark bg-secondary-subtle border border-dark-subtle"
+                        >{{ m.get_movement_type_display }}</span>
+                        {% endif %}
+                        {% if m.get_movement_type_display == 'Adjustment' %}
+                        <span 
+                        class="badge text-dark bg-warning-subtle border border-dark-subtle"
+                        >{{ m.get_movement_type_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ m.item.sku }}</td>
+                    <td>{{ m.quantity }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4" class="text-center text-muted">No recent activity.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <a href="{% url 'movement-list' %}" class="btn btn-sm ms-auto btn-outline-secondary">View full movement history →</a>
+    </div>
+</div>
+{% endblock %}
