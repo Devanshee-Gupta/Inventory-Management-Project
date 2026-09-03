@@ -41,7 +41,7 @@
     {% endif %}
 </div>
 
-<div class="row g-4 justify-content-evenly">
+<div class="row g-4 justify-content-evenly mb-4">
     <div class="col-md-5 card px-md-3 py-md-4 shadow">
         <h5 class="text-center">Low Stock Items</h5>
         <table class="inline-block table table-sm bg-dark text-light text-center mt-3">
@@ -74,17 +74,17 @@
                     <td>
                         {% if m.get_movement_type_display == 'Receipt' %}
                         <span 
-                        class="badge text-dark bg-primary-subtle"
+                        class="badge text-dark bg-primary-subtle border border-dark-subtle"
                         >{{ m.get_movement_type_display }}</span>
                         {% endif %}
                         {% if m.get_movement_type_display == 'Issue' %}
                         <span 
-                        class="badge text-dark bg-danger-subtle"
+                        class="badge text-dark bg-danger-subtle border border-dark-subtle"
                         >{{ m.get_movement_type_display }}</span>
                         {% endif %}
                         {% if m.get_movement_type_display == 'Transfer' %}
                         <span 
-                        class="badge text-dark bg-secondary-subtle"
+                        class="badge text-dark bg-secondary-subtle border border-dark-subtle"
                         >{{ m.get_movement_type_display }}</span>
                         {% endif %}
                     </td>

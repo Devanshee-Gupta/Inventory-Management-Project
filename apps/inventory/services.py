@@ -5,7 +5,7 @@ from django.db.models import Q
 from apps.accounts.permissions import is_manager
 from apps.locations.services import get_accessible_locations
 
-from .models import StockMovement
+from .models import StockMovement, ItemHistory
 
 
 def calculate_item_stock_by_location(item, location):
@@ -201,4 +201,22 @@ def get_visible_movements(user):
         Q(location_id__in=accessible_ids)
         | Q(source_location_id__in=accessible_ids)
         | Q(destination_location_id__in=accessible_ids)
+    )
+    
+
+
+def log_item_event(*, item, event_type, performed_by, field_name="", old_value="", new_value="", note=""):
+    """
+    The single entry point for writing an ItemHistory row. Every mutation
+    path — template views and API actions alike — calls this, so there is
+    exactly one place that creates history entries.
+    """
+    return ItemHistory.objects.create(
+        item=item,
+        event_type=event_type,
+        performed_by=performed_by,
+        field_name=field_name,
+        old_value="" if old_value is None else str(old_value),
+        new_value="" if new_value is None else str(new_value),
+        note=note,
     )

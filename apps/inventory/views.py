@@ -28,8 +28,8 @@ from apps.accounts.permissions import (
 )
 
 from .forms import CategoryForm, ItemForm, AdjustmentForm, IssueForm, ReceiptForm, TransferForm
-from .models import Category, Item, StockMovement
-from .serializers import CategorySerializer, ItemSerializer, StockMovementSerializer
+from .models import Category, Item, ItemHistory, StockMovement
+from .serializers import CategorySerializer, ItemSerializer, ItemHistorySerializer, StockMovementSerializer
 from apps.locations.services import get_accessible_locations
 from .services import (
     calculate_item_stock,
@@ -38,6 +38,7 @@ from .services import (
     is_below_reorder,
     record_stock_movement,
     apply_low_stock_filter,
+    log_item_event,
 )
 from .filters import filter_categories, filter_items, filter_movements
 
@@ -167,6 +168,7 @@ class ItemDetailView(LoginRequiredMixin, DetailView):
             {"location": loc, "stock": calculate_item_stock_by_location(item, loc)}
             for loc in accessible
         ]
+        context["history"] = item.history.all()  # already ordered -created_at via Meta
         return context
 
 
@@ -178,7 +180,12 @@ class ItemCreateView(ManagerRequiredMixin, CreateView):
 
     def form_valid(self, form):
         form.instance.created_by = self.request.user
-        return super().form_valid(form)
+        response = super().form_valid(form)
+        log_item_event(
+            item=self.object, event_type=ItemHistory.EventType.CREATED,
+            performed_by=self.request.user, note=f"Item {self.object.sku} created.",
+        )
+        return response
 
 
 class ItemUpdateView(ManagerRequiredMixin, UpdateView):
@@ -187,12 +194,25 @@ class ItemUpdateView(ManagerRequiredMixin, UpdateView):
     template_name = "inventory/item_form.html"
     success_url = reverse_lazy("item-list")
 
+    def form_valid(self, form):
+        # Fetch BEFORE super().form_valid() saves — see the branch-level
+        # design note for why this ordering is the whole point.
+        original = Item.objects.get(pk=self.object.pk)
+        response = super().form_valid(form)  # form.save() happens inside here
+        for field in form.changed_data:
+            log_item_event(
+                item=self.object, event_type=ItemHistory.EventType.UPDATED,
+                performed_by=self.request.user, field_name=field,
+                old_value=getattr(original, field), new_value=getattr(self.object, field),
+            )
+        return response
 
 class ItemArchiveView(ManagerRequiredMixin, View):
     def post(self, request, pk):
         item = get_object_or_404(Item, pk=pk)
         item.is_archived = True
-        item.save(update_fields=["is_archived", "updated_at"])
+        item.save(update_fields=["is_archived", "updated_at"]) 
+        log_item_event(item=item, event_type=ItemHistory.EventType.ARCHIVED, performed_by=request.user)
         return redirect("item-list")
 
 
@@ -201,8 +221,21 @@ class ItemRestoreView(ManagerRequiredMixin, View):
         item = get_object_or_404(Item, pk=pk)
         item.is_archived = False
         item.save(update_fields=["is_archived", "updated_at"])
+        log_item_event(item=item, event_type=ItemHistory.EventType.RESTORED, performed_by=request.user)
         return redirect("archived-item-list")
 
+
+class ItemAddNoteView(ManagerRequiredMixin, View):
+    """The NOTE event type — a freeform annotation not tied to any field change."""
+    def post(self, request, pk):
+        item = get_object_or_404(Item, pk=pk)
+        note = (request.POST.get("note") or "").strip()
+        if not note:
+            messages.error(request, "Note cannot be blank.")
+        else:
+            log_item_event(item=item, event_type=ItemHistory.EventType.NOTE, performed_by=request.user, note=note)
+            messages.success(request, "Note added.")
+        return redirect("item-detail", pk=pk)
 
 # ---- DRF API (session-authenticated) ----
 
@@ -236,13 +269,35 @@ class ItemViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        instance = serializer.save(created_by=self.request.user)
+        log_item_event(
+            item=instance, event_type=ItemHistory.EventType.CREATED,
+            performed_by=self.request.user, note=f"Item {instance.sku} created.",
+        )
+    
+    def perform_update(self, serializer):
+        # DRF does NOT mutate serializer.instance during is_valid() the way
+        # Django's ModelForm does — .update() is what changes it, and that
+        # only happens inside serializer.save() below. So the "fetch fresh
+        # copy first" trick from the template side isn't needed here; the
+        # pre-save instance is still genuinely the old data at this point.
+        original = Item.objects.get(pk=serializer.instance.pk)
+        instance = serializer.save()
+        for field in serializer.validated_data.keys():
+            old_value, new_value = getattr(original, field), getattr(instance, field)
+            if str(old_value) != str(new_value):
+                log_item_event(
+                    item=instance, event_type=ItemHistory.EventType.UPDATED,
+                    performed_by=self.request.user, field_name=field,
+                    old_value=old_value, new_value=new_value,
+                )
     
     @action(detail=True, methods=["post"], permission_classes=[IsManager])
     def archive(self, request, pk=None):
         item = self.get_object()
         item.is_archived = True
         item.save(update_fields=["is_archived", "updated_at"])
+        log_item_event(item=item, event_type=ItemHistory.EventType.ARCHIVED, performed_by=request.user)
         return Response(ItemSerializer(item).data)
 
     @action(detail=True, methods=["post"], permission_classes=[IsManager])
@@ -250,6 +305,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         item = self.get_object()
         item.is_archived = False
         item.save(update_fields=["is_archived", "updated_at"])
+        log_item_event(item=item, event_type=ItemHistory.EventType.RESTORED, performed_by=request.user)
         return Response(ItemSerializer(item).data)
     
     @action(detail=True, methods=["get"])
@@ -272,7 +328,21 @@ class ItemViewSet(viewsets.ModelViewSet):
             "by_location": breakdown,
         })
     
+    @action(detail=True, methods=["get"])
+    def history(self, request, pk=None):
+        item = self.get_object()
+        return Response(ItemHistorySerializer(item.history.all(), many=True).data)
 
+    @action(detail=True, methods=["post"], permission_classes=[IsManager])
+    def add_note(self, request, pk=None):
+        item = self.get_object()
+        note = (request.data.get("note") or "").strip()
+        if not note:
+            raise DRFValidationError({"note": "Note cannot be blank."})
+        entry = log_item_event(item=item, event_type=ItemHistory.EventType.NOTE, performed_by=request.user, note=note)
+        return Response(ItemHistorySerializer(entry).data, status=201)
+    
+    
 # ---- Stock movement template views ----
 
 class MovementListView(LoginRequiredMixin, ListView):

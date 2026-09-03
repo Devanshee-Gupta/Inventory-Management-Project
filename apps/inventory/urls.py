@@ -14,6 +14,7 @@ urlpatterns = [
     path("items/<int:pk>/edit/", views.ItemUpdateView.as_view(), name="item-update"),
     path("items/<int:pk>/archive/", views.ItemArchiveView.as_view(), name="item-archive"),
     path("items/<int:pk>/restore/", views.ItemRestoreView.as_view(), name="item-restore"),
+    path("items/<int:pk>/note/", views.ItemAddNoteView.as_view(), name="item-add-note"),
     
     path("movements/", views.MovementListView.as_view(), name="movement-list"),
     path("movements/receipt/", views.ReceiptCreateView.as_view(), name="movement-receipt"),
