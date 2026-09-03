@@ -26,20 +26,20 @@ class AuthenticationViewTests(TestCase):
         response = self.client.get(reverse("login"))
         self.assertEqual(response.status_code, 200)
 
-    def test_successful_login_redirects_to_home(self):
+    def test_successful_login_redirects_to_dashboard(self):
         response = self.client.post(
             reverse("login"), {"username": "testuser", "password": "testpass123"}
         )
-        self.assertRedirects(response, reverse("home"))
+        self.assertRedirects(response, reverse("dashboard"))
 
-    def test_home_requires_login(self):
-        response = self.client.get(reverse("home"))
+    def test_dashboard_requires_login(self):
+        response = self.client.get(reverse("dashboard"))
         self.assertNotEqual(response.status_code, 200)  # redirected to login
 
     def test_logout_requires_post(self):
         self.client.login(username="testuser", password="testpass123")
         response = self.client.get(reverse("logout"))
-        self.assertEqual(response.status_code, 405)  # GET not allowed
+        self.assertEqual(response.status_code, 405)
 
     def test_logout_via_post_redirects_to_login(self):
         self.client.login(username="testuser", password="testpass123")
