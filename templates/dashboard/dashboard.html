@@ -102,6 +102,11 @@
                         class="badge text-dark bg-secondary-subtle border border-dark-subtle"
                         >{{ m.get_movement_type_display }}</span>
                         {% endif %}
+                        {% if m.get_movement_type_display == 'Adjustment' %}
+                        <span 
+                        class="badge text-dark bg-warning-subtle border border-dark-subtle"
+                        >{{ m.get_movement_type_display }}</span>
+                        {% endif %}
                     </td>
                     <td>{{ m.item.sku }}</td>
                     <td>{{ m.quantity }}</td>

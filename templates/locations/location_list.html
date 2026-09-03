@@ -77,9 +77,9 @@
       <td>{{ location.description|default:"—" }}</td>
       <td>
         {% if location.is_active %}
-        <span class="badge bg-success">Active</span>
+        <span class="badge bg-warning-subtle text-dark border border-dark-subtle">Active</span>
         {% else %}
-        <span class="badge bg-secondary">Inactive</span>
+        <span class="badge bg-secondary-subtle text-dark border border-dark-subtle">Inactive</span>
         {% endif %}
       </td>
       {% if user.profile.is_manager %}
