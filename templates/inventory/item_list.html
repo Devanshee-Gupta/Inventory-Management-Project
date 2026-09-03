@@ -58,7 +58,7 @@
       <td>{{ item.reorder_level }}</td>
       <td>
         {{ item.current_stock }} {% if item.below_reorder %}
-        <span class="badge bg-warning text-dark">Low</span>
+        <span class="badge bg-warning-subtle text-dark border border-dark-subtle">Low</span>
         {% endif %}
       </td>
       {% if user.profile.is_manager %}

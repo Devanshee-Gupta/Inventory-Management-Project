@@ -98,3 +98,39 @@ class StockMovement(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValueError("Stock movements are immutable and cannot be deleted.")
+
+
+class ItemHistory(models.Model):
+    class EventType(models.TextChoices):
+        CREATED = "CREATED", "Created"
+        UPDATED = "UPDATED", "Updated"
+        NOTE = "NOTE", "Note"
+        ARCHIVED = "ARCHIVED", "Archived"
+        RESTORED = "RESTORED", "Restored"
+
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, related_name="history")
+    event_type = models.CharField(max_length=10, choices=EventType.choices)
+    field_name = models.CharField(max_length=50, blank=True)
+    old_value = models.TextField(blank=True)
+    new_value = models.TextField(blank=True)
+    note = models.TextField(blank=True)
+    performed_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="item_history_entries")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name_plural = "item histories"
+
+    def __str__(self):
+        return f"{self.item.sku} · {self.event_type} · {self.created_at:%Y-%m-%d}"
+
+    # Rule 2's immutability principle isn't stated as applying to ItemHistory
+    # explicitly, but "no edit, no delete" is the whole point of an audit
+    # trail — the same model-layer guard used on StockMovement is used here.
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("Item history entries are immutable and cannot be edited.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Item history entries are immutable and cannot be deleted.")

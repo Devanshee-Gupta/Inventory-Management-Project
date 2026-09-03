@@ -5,7 +5,7 @@ from django.urls import reverse
 
 from apps.accounts.models import Profile
 from apps.locations.models import Location, StaffLocationAssignment
-from .models import Category, Item, StockMovement
+from .models import Category, Item, ItemHistory, StockMovement
 from .filters import filter_categories, filter_items, filter_movements
 
 from .services import (
@@ -14,6 +14,7 @@ from .services import (
     is_below_reorder, 
     record_stock_movement,
     apply_low_stock_filter,
+    log_item_event,
 )
 
 import io
@@ -794,3 +795,131 @@ class MovementImportTests(TestCase):
         response = self.client.post(reverse("movement-import"), {"csv_file": upload}, follow=True)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(StockMovement.objects.count(), 0)
+        
+
+
+class ItemHistoryImmutabilityTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        self.item = Item.objects.create(sku="ITM-1", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+
+    def test_history_entry_cannot_be_edited(self):
+        entry = log_item_event(item=self.item, event_type=ItemHistory.EventType.NOTE, performed_by=self.manager, note="test")
+        entry.note = "changed"
+        with self.assertRaises(ValueError):
+            entry.save()
+
+    def test_history_entry_cannot_be_deleted(self):
+        entry = log_item_event(item=self.item, event_type=ItemHistory.EventType.NOTE, performed_by=self.manager, note="test")
+        with self.assertRaises(ValueError):
+            entry.delete()
+
+
+class ItemHistoryHookTests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+
+    def test_creating_item_via_template_logs_created_event(self):
+        self.client.login(username="mgr", password="pass12345")
+        self.client.post(reverse("item-create"), {
+            "sku": "NEW-1", "name": "New Widget", "description": "",
+            "unit_of_measure": "PCS", "reorder_level": 5, "category": self.category.pk,
+        })
+        item = Item.objects.get(sku="NEW-1")
+        self.assertTrue(item.history.filter(event_type=ItemHistory.EventType.CREATED).exists())
+
+    def test_updating_item_logs_correct_old_and_new_values(self):
+        """Regression test for the Django ModelForm _post_clean() gotcha described above."""
+        item = Item.objects.create(sku="ITM-1", name="Old Name", unit_of_measure="PCS", reorder_level=5, category=self.category, created_by=self.manager)
+        self.client.login(username="mgr", password="pass12345")
+        self.client.post(reverse("item-update", args=[item.pk]), {
+            "sku": "ITM-1", "name": "New Name", "description": "",
+            "unit_of_measure": "PCS", "reorder_level": 5, "category": self.category.pk,
+        })
+        entry = item.history.get(event_type=ItemHistory.EventType.UPDATED, field_name="name")
+        self.assertEqual(entry.old_value, "Old Name")
+        self.assertEqual(entry.new_value, "New Name")
+
+    def test_unchanged_fields_do_not_produce_history_rows(self):
+        item = Item.objects.create(sku="ITM-1", name="Widget", unit_of_measure="PCS", reorder_level=5, category=self.category, created_by=self.manager)
+        self.client.login(username="mgr", password="pass12345")
+        self.client.post(reverse("item-update", args=[item.pk]), {
+            "sku": "ITM-1", "name": "Widget", "description": "",
+            "unit_of_measure": "PCS", "reorder_level": 5, "category": self.category.pk,
+        })
+        self.assertFalse(item.history.filter(event_type=ItemHistory.EventType.UPDATED).exists())
+
+    def test_archive_and_restore_log_events(self):
+        item = Item.objects.create(sku="ITM-2", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        self.client.login(username="mgr", password="pass12345")
+        self.client.post(reverse("item-archive", args=[item.pk]))
+        self.assertTrue(item.history.filter(event_type=ItemHistory.EventType.ARCHIVED).exists())
+        self.client.post(reverse("item-restore", args=[item.pk]))
+        self.assertTrue(item.history.filter(event_type=ItemHistory.EventType.RESTORED).exists())
+
+    def test_manager_can_add_note(self):
+        item = Item.objects.create(sku="ITM-3", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        self.client.login(username="mgr", password="pass12345")
+        self.client.post(reverse("item-add-note", args=[item.pk]), {"note": "Received a customer complaint about this batch."})
+        self.assertTrue(item.history.filter(event_type=ItemHistory.EventType.NOTE).exists())
+
+    def test_staff_cannot_add_note(self):
+        item = Item.objects.create(sku="ITM-4", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.post(reverse("item-add-note", args=[item.pk]), {"note": "trying anyway"})
+        self.assertEqual(response.status_code, 403)
+
+    def test_blank_note_rejected(self):
+        item = Item.objects.create(sku="ITM-5", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+        self.client.login(username="mgr", password="pass12345")
+        self.client.post(reverse("item-add-note", args=[item.pk]), {"note": "   "})
+        self.assertFalse(item.history.filter(event_type=ItemHistory.EventType.NOTE).exists())
+
+    def test_history_visible_for_archived_item(self):
+        item = Item.objects.create(sku="ITM-6", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager, is_archived=True)
+        log_item_event(item=item, event_type=ItemHistory.EventType.NOTE, performed_by=self.manager, note="Historical note")
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(reverse("item-detail", args=[item.pk]))
+        self.assertContains(response, "Historical note")
+
+
+class ItemHistoryAPITests(TestCase):
+    def setUp(self):
+        self.manager = User.objects.create_user(username="mgr", password="pass12345")
+        self.manager.profile.role = Profile.Role.MANAGER
+        self.manager.profile.save()
+        self.staff = User.objects.create_user(username="stf", password="pass12345")
+        self.category = Category.objects.create(name="Electronics", created_by=self.manager)
+        self.item = Item.objects.create(sku="ITM-1", name="Widget", unit_of_measure="PCS", category=self.category, created_by=self.manager)
+
+    def test_create_via_api_logs_created_event(self):
+        self.client.login(username="mgr", password="pass12345")
+        self.client.post("/api/items/", {"sku": "API-1", "name": "API Widget", "unit_of_measure": "PCS", "category": self.category.pk})
+        item = Item.objects.get(sku="API-1")
+        self.assertTrue(item.history.filter(event_type=ItemHistory.EventType.CREATED).exists())
+
+    def test_update_via_api_logs_correct_diff(self):
+        self.client.login(username="mgr", password="pass12345")
+        self.client.patch(f"/api/items/{self.item.pk}/", {"name": "Renamed Widget"}, content_type="application/json")
+        entry = self.item.history.get(event_type=ItemHistory.EventType.UPDATED, field_name="name")
+        self.assertEqual(entry.old_value, "Widget")
+        self.assertEqual(entry.new_value, "Renamed Widget")
+
+    def test_history_action_returns_entries(self):
+        log_item_event(item=self.item, event_type=ItemHistory.EventType.NOTE, performed_by=self.manager, note="test note")
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.get(f"/api/items/{self.item.pk}/history/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()), 1)
+
+    def test_staff_cannot_add_note_via_api(self):
+        self.client.login(username="stf", password="pass12345")
+        response = self.client.post(f"/api/items/{self.item.pk}/add_note/", {"note": "trying"})
+        self.assertEqual(response.status_code, 403)
