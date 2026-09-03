@@ -137,6 +137,15 @@ def record_stock_movement(
             recorded_by=recorded_by,
         )
 
+        # STEP 13: opportunistic sync so an alert appears immediately, not only
+        # the next time someone happens to load /alerts/. A LOCAL import is used
+        # deliberately — apps.alerts already imports from apps.inventory, so an
+        # apps.inventory -> apps.alerts import at module load time would create
+        # a circular dependency. Importing inside the function body defers the
+        # import until call time, by which point both modules are fully loaded.
+        from apps.alerts.services import sync_alert_for_item
+        sync_alert_for_item(item)
+
     return movement
 
 

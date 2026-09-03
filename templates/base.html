@@ -10,7 +10,7 @@
     />
   </head>
   <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+    <nav class="navbar sticky-top navbar-expand-lg navbar-dark bg-dark mb-4">
       <div class="container">
         <a class="navbar-brand" href="{% url 'dashboard' %}">Inventory System</a>
         {% if user.is_authenticated %}
@@ -37,6 +37,11 @@
           >
 
           {% if user.profile.is_manager %}
+          <a 
+            href="{% url 'alert-list' %}" 
+            class="text-light text-decoration-none me-3"
+            >Alerts</a
+          >
           <a
             href="{% url 'archived-item-list' %}"
             class="text-light text-decoration-none me-3"
