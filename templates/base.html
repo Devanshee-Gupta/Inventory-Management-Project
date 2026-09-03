@@ -12,9 +12,14 @@
   <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
       <div class="container">
-        <a class="navbar-brand" href="{% url 'home' %}">Inventory System</a>
+        <a class="navbar-brand" href="{% url 'dashboard' %}">Inventory System</a>
         {% if user.is_authenticated %}
         <div class="d-flex align-items-center">
+          <a 
+            href="{% url 'dashboard' %}" 
+            class="text-light text-decoration-none me-3"
+            >Dashboard</a
+          >
           <a
             href="{% url 'category-list' %}"
             class="text-light text-decoration-none me-3"
@@ -31,9 +36,22 @@
             >Locations</a
           >
 
+          {% if user.profile.is_manager %}
+          <a
+            href="{% url 'archived-item-list' %}"
+            class="text-light text-decoration-none me-3"
+            >Archived Items</a
+          >
+          <a
+            href="{% url 'assignment-list' %}"
+            class="text-light text-decoration-none me-3"
+            >Staff Assignments</a
+          >
+          {% endif %}
+
           <div class="dropdown me-3">
             <a
-              class="btn btn-outline-light btn-sm dropdown-toggle"
+              class="btn text-light btn-md dropdown-toggle px-1"
               href="#"
               role="button"
               data-bs-toggle="dropdown"
@@ -71,18 +89,6 @@
             </ul>
           </div>
 
-          {% if user.profile.is_manager %}
-          <a
-            href="{% url 'archived-item-list' %}"
-            class="text-light text-decoration-none me-3"
-            >Archived Items</a
-          >
-          <a
-            href="{% url 'assignment-list' %}"
-            class="text-light text-decoration-none me-3"
-            >Staff Assignments</a
-          >
-          {% endif %}
           <span class="text-light me-3">
             {{ user.username }} ({{ user.profile.get_role_display }})
           </span>

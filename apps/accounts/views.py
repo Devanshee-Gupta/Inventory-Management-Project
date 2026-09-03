@@ -14,11 +14,3 @@ class CustomLoginView(LoginView):
 class CustomLogoutView(LogoutView):
     next_page = "login"
 
-
-@login_required
-def home_view(request):
-    """
-    Temporary placeholder landing page after login.
-    Replaced by the real dashboard in feature/dashboard (STEP 11).
-    """
-    return render(request, "accounts/home.html")
