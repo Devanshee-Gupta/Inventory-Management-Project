@@ -6,12 +6,17 @@
     .table th {
         white-space: nowrap;
     }
+    .chart-wrap {
+        position: relative;
+        height: 280px;
+        width: 100%;
+    }
 </style>
 <h3>Dashboard</h3>
 <p class="text-muted">Welcome, {{ user.username }} ({{ user.profile.get_role_display }})</p>
 
 <div class="row g-3 mb-4 justify-content-center">
-    <div class="col-sm-6 col-lg-2">
+    <div class="col-sm-6 col-lg-3">
         <div class="card text-center shadow h-100">
             <div class="card-body">
                 <div class="fs-3">{{ total_items }}</div>
@@ -22,7 +27,7 @@
             </div>
         </div>
     </div>
-    <div class="col-sm-6 col-lg-2">
+    <div class="col-sm-6 col-lg-3">
         <div class="card text-center shadow h-100">
             <div class="card-body">
                 <div class="fs-3">{{ accessible_location_count }}</div>
@@ -35,7 +40,7 @@
             </div>
         </div>
     </div>
-    <div class="col-sm-6 col-lg-2">
+    <div class="col-sm-6 col-lg-3">
         <div class="card text-center shadow h-100">
             <div class="card-body">
                 <div class="fs-3">{{ low_stock_count }}</div>
@@ -46,9 +51,33 @@
             </div>
         </div>
     </div>
-    
+
+    <div class="col-sm-6 col-lg-3">
+        <div class="card text-center shadow h-100">
+            <div class="card-body">
+                <div class="fs-3">{{ movements_today_count }}</div>
+                <div class="text-muted small">
+                        <a href="{% url 'movement-list' %}" class="nav-link text-nowrap"
+                        style="--bs-nav-link-hover-color: #b75c12;">Movements Today &#x2192;</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-sm-6 col-lg-3">
+        <div class="card text-center shadow h-100">
+            <div class="card-body">
+                <div class="fs-3">{{ distinct_items_this_week_count }}</div>
+                <div class="text-muted small">
+                        <a href="{% url 'movement-list' %}" class="nav-link text-nowrap"
+                        style="--bs-nav-link-hover-color: #b75c12;">Items Moved This Week &#x2192;</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
     {% if is_manager %}
-    <div class="col-sm-6 col-lg-2">
+    <div class="col-sm-6 col-lg-3">
         <div class="card text-center shadow h-100">
             <div class="card-body">
                 <div class="fs-3">{{ archived_items_count }}</div>
@@ -62,7 +91,7 @@
     {% endif %}
 
     {% if is_manager %}
-        <div class="col-sm-6 col-lg-2">
+        <div class="col-sm-6 col-lg-3">
             <div class="card text-center shadow h-100">
                 <div class="card-body">
                     <div class="fs-3">{{ active_alert_count }}</div>
@@ -146,4 +175,105 @@
         <a href="{% url 'movement-list' %}" class="btn btn-sm ms-auto mt-3 btn-outline-dark text-nowrap">View full movement history →</a>
     </div>
 </div>
+
+<div class="row g-4 mb-4 pb-4">
+    <div class="col-12 col-lg-6">
+        <div class="card p-3 py-md-4 shadow h-100">
+            <h5 class="text-center">Receipts vs Issues — Last 8 Weeks</h5>
+            <div class="chart-wrap mt-3">
+                <canvas id="weeklyVolumeChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-6 col-lg-3">
+        <div class="card p-3 py-md-4 shadow h-100">
+            <h5 class="text-center">Stock by Category</h5>
+            <div class="chart-wrap mt-3">
+                <canvas id="categoryChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-6 col-lg-3">
+        <div class="card p-3 py-md-4 shadow h-100">
+            <h5 class="text-center">Stock by Location</h5>
+            <div class="chart-wrap mt-3">
+                <canvas id="locationChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{ chart_week_labels_json|json_script:"chart-week-labels" }}
+{{ chart_receipt_series_json|json_script:"chart-receipt-series" }}
+{{ chart_issue_series_json|json_script:"chart-issue-series" }}
+{{ chart_category_labels_json|json_script:"chart-category-labels" }}
+{{ chart_category_data_json|json_script:"chart-category-data" }}
+{{ chart_location_labels_json|json_script:"chart-location-labels" }}
+{{ chart_location_data_json|json_script:"chart-location-data" }}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    function readJSON(id) {
+        var el = document.getElementById(id);
+        return el ? JSON.parse(el.textContent) : [];
+    }
+
+    var weekLabels = readJSON("chart-week-labels");
+    var receiptSeries = readJSON("chart-receipt-series");
+    var issueSeries = readJSON("chart-issue-series");
+    var categoryLabels = readJSON("chart-category-labels");
+    var categoryData = readJSON("chart-category-data");
+    var locationLabels = readJSON("chart-location-labels");
+    var locationData = readJSON("chart-location-data");
+
+    new Chart(document.getElementById("weeklyVolumeChart"), {
+        type: "bar",
+        data: {
+            labels: weekLabels,
+            datasets: [
+                { label: "Receipts", data: receiptSeries, backgroundColor: "#0d6dfd8e" },
+                { label: "Issues", data: issueSeries, backgroundColor: "#dc3546a8" }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true } },
+            plugins: { legend: { position: "bottom" } }
+        }
+    });
+
+    new Chart(document.getElementById("categoryChart"), {
+        type: "doughnut",
+        data: {
+            labels: categoryLabels,
+            datasets: [{
+                data: categoryData,
+                backgroundColor: ["#3b70be84", "#19875494", "#ffc10781", "#6c757d", "#7dd3b99d", "#c8b3a19a"]
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom", labels: { boxWidth: 12 } } }
+        }
+    });
+
+    new Chart(document.getElementById("locationChart"), {
+        type: "bar",
+        data: {
+            labels: locationLabels,
+            datasets: [{ label: "Stock on hand", data: locationData, backgroundColor: "#c19898b0" }]
+        },
+        options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: { x: { beginAtZero: true } },
+            plugins: { legend: { display: false } }
+        }
+    });
+})();
+</script>
 {% endblock %}
