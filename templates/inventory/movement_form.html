@@ -14,7 +14,7 @@
         {% if field.errors %}<div class="text-danger small">{{ field.errors }}</div>{% endif %}
     </div>
     {% endfor %}
-    <button type="submit" class="btn btn-primary">Save</button>
-    <a href="{% url 'movement-list' %}" class="btn btn-outline-secondary">Cancel</a>
+    <button type="submit" class="btn btn-dark mb-2">Save</button>
+    <a href="{% url 'movement-list' %}" class="btn btn-outline-secondary mb-2">Cancel</a>
 </form>
 {% endblock %}

@@ -1,24 +1,216 @@
-{% extends "base.html" %}
-{% block title %}Login{% endblock %}
-{% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-4">
-        <h3 class="mb-3">Login</h3>
-        <form method="post">
-            {% csrf_token %}
-            {% if form.non_field_errors %}
-                <div class="alert alert-danger">{{ form.non_field_errors }}</div>
-            {% endif %}
-            <div class="mb-3">
-                <label class="form-label">Username</label>
-                {{ form.username }}
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Password</label>
-                {{ form.password }}
-            </div>
-            <button type="submit" class="btn btn-primary w-100">Login</button>
-        </form>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in · Inventory System</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --brand-dark: #212529;
+      --brand-dark-2: #2b3035;
+      --brand-muted: #adb5bd;
+      --brand-line: rgba(255, 255, 255, 0.14);
+    }
+    html, body {
+      height: 100%;
+    }
+    body {
+      overflow-x: hidden;
+    }
+    .login-page {
+      min-height: 100vh;
+    }
+    .login-brand {
+      background-color: var(--brand-dark);
+      background-image:
+        radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+        linear-gradient(160deg, var(--brand-dark-2) 0%, var(--brand-dark) 60%);
+      background-size: 20px 20px, cover;
+      color: #f8f9fa;
+      padding: 3rem 3rem;
+      position: relative;
+    }
+    .login-brand-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #fff;
+      letter-spacing: 0.01em;
+    }
+    .login-brand-mark svg {
+      flex-shrink: 0;
+    }
+    .login-brand-headline {
+      font-size: 2.2rem;
+      font-weight: 650;
+      line-height: 1.28;
+      letter-spacing: -0.01em;
+      max-width: 24ch;
+      color: #fff;
+    }
+    .login-brand-sub {
+      color: var(--brand-muted);
+      max-width: 38ch;
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+    .login-legend {
+      border-top: 1px solid var(--brand-line);
+      padding-top: 1.4rem;
+      display: flex;
+      gap: 0;
+    }
+    .login-legend-item {
+      padding-right: 1.4rem;
+      margin-right: 1.4rem;
+      border-right: 1px solid var(--brand-line);
+    }
+    .login-legend-item:last-child {
+      border-right: none;
+      margin-right: 0;
+      padding-right: 0;
+    }
+    .login-legend-item .value {
+      display: block;
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .login-legend-item .label {
+      color: var(--brand-muted);
+      font-size: 0.78rem;
+    }
+    .login-form-panel {
+      background: #fff;
+    }
+    .login-form-inner {
+      width: 100%;
+      max-width: 400px;
+    }
+    .login-icon {
+      background: #f8f9fa;
+      color: #868e96;
+      border-right: none;
+    }
+    .login-form-inner .form-control:focus {
+      z-index: 3;
+    }
+    .form-control:focus-within, .form-control:focus-visible {
+      box-shadow: none!important;
+      outline: none!important;
+    }
+    .login-footnote {
+      color: #adb5bd;
+      font-size: 0.8rem;
+    }
+    .form-control:focus-within, .form-control:focus-visible, .form-control:active {
+      box-shadow: none!important;
+      outline: none!important;
+      border-color: #2125295d!important;
+    }
+    @media (max-width: 991.98px) {
+      .login-brand { padding: 2.25rem 1.5rem; }
+      .login-brand-headline { font-size: 1.4rem; }
+      .login-form-panel { padding: 2.5rem 1.5rem !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="login-page d-flex flex-column flex-lg-row">
+
+    <div class="login-brand d-flex flex-column justify-content-between col-lg-6">
+      <div class="login-brand-mark">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M4 20V14"></path>
+          <path d="M11 20V9"></path>
+          <path d="M18 20V4"></path>
+        </svg>
+        Inventory System
+      </div>
+
+      <div class="my-5 my-lg-0">
+        <div class="login-brand-headline mb-3">
+          Stock levels calculated from every movement — never stored, never guessed.
+        </div>
+        <div class="login-brand-sub">
+          Receipts, issues, transfers, and adjustments form one immutable ledger across every location.
+        </div>
+      </div>
+
+      <div class="login-legend d-none d-lg-flex">
+        <div class="login-legend-item">
+          <span class="value">Live</span>
+          <span class="label">Stock, per location</span>
+        </div>
+        <div class="login-legend-item">
+          <span class="value">Immutable</span>
+          <span class="label">Movement history</span>
+        </div>
+        <div class="login-legend-item">
+          <span class="value">Scoped</span>
+          <span class="label">Manager &amp; Staff access</span>
+        </div>
+      </div>
     </div>
-</div>
-{% endblock %}
+
+    <div class="login-form-panel d-flex align-items-center justify-content-center col-lg-6 flex-grow-1 py-5">
+      <div class="login-form-inner">
+        <h1 class="h3 mb-1">Sign in</h1>
+        <p class="text-muted mb-4">Enter your credentials to continue.</p>
+
+        {% if messages %}
+          {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} py-2">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+
+        <form method="post" novalidate>
+          {% csrf_token %}
+          {% if form.non_field_errors %}
+            <div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>
+          {% endif %}
+
+          <div class="mb-3">
+            <label class="form-label small text-muted" for="{{ form.username.id_for_label }}">Username</label>
+            <div class="input-group">
+              <span class="input-group-text login-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+              </span>
+              {{ form.username }}
+            </div>
+            {% if form.username.errors %}<div class="text-danger small mt-1">{{ form.username.errors }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small text-muted" for="{{ form.password.id_for_label }}">Password</label>
+            <div class="input-group">
+              <span class="input-group-text login-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+              </span>
+              {{ form.password }}
+            </div>
+            {% if form.password.errors %}<div class="text-danger small mt-1">{{ form.password.errors }}</div>{% endif %}
+          </div>
+
+          <button type="submit" class="btn btn-dark text-light w-100 py-2 mt-2">Sign in</button>
+        </form>
+
+        <p class="login-footnote mt-4 mb-0 text-center">
+          Access is provisioned by your inventory manager — there's no self-signup.
+        </p>
+      </div>
+    </div>
+
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

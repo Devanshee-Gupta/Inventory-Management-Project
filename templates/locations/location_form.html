@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{% if object %}Edit{% else %}New{% endif %} Location{% endblock %}
 {% block content %}
+<style>
+    .form-check-input:checked {
+        background-color: #212529;
+        color: #212529;
+    }
+    .form-check-input:focus {
+        box-shadow: none !important;
+        border-color: #000 !important;
+    }
+</style>
 <h3>{% if object %}Edit{% else %}New{% endif %} Location</h3>
 <form method="post">
     {% csrf_token %}
@@ -24,7 +34,7 @@
         {{ form.is_active }}
         <label class="form-check-label">Active</label>
     </div>
-    <button type="submit" class="btn btn-primary">Save</button>
-    <a href="{% url 'location-list' %}" class="btn btn-outline-secondary">Cancel</a>
+    <button type="submit" class="btn btn-dark me-md-1 mb-2">Save</button>
+    <a href="{% url 'location-list' %}" class="btn btn-outline-secondary mb-2">Cancel</a>
 </form>
 {% endblock %}

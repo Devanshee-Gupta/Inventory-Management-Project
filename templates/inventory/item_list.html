@@ -3,34 +3,104 @@
 {% block title %} Items {% endblock %} 
 
 {% block content %}
+<style>
+.dropdown-menu {
+    background-color: #white;
+    color: black;
+}
+
+.dropdown-item {
+    color: black;
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+    background-color: #212529;
+    color: white;
+}
+.form-check-input:checked {
+    background-color: #212529;
+    color: #212529;
+}
+.form-check-input:focus {
+    box-shadow: none !important;
+    border-color: #000 !important;
+}
+</style>
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h3>Items</h3>
     <div>
         <a href="{% url 'item-export' %}?{{ request.GET.urlencode }}" class="btn btn-outline-secondary btn-sm">Export CSV</a>
         {% if user.profile.is_manager %}
             <a href="{% url 'item-import' %}" class="btn btn-outline-secondary btn-sm mx-1">Import CSV</a>
-            <a href="{% url 'item-create' %}" class="btn btn-primary btn-sm ms-1">+ New Item</a>
+            <a href="{% url 'item-create' %}" class="btn btn-dark text-light btn-sm ms-1">+ New Item</a>
         {% endif %}
     </div>
 </div>
 <form method="get" class="row g-2 mb-3 align-items-center">
     <div class="col-auto">
-        <input type="text" name="q" value="{{ request.GET.q }}" class="form-control form-control-sm border-black" placeholder="Search SKU or name">
+        <input type="text" name="q" value="{{ request.GET.q }}" class="form-control form-control-sm border-black outline-none shadow-none" placeholder="Search SKU or name">
     </div>
     <div class="col-auto">
-        <select name="category" class="form-select form-select-sm border-black">
-            <option value="">All Categories</option>
-            {% for cat in categories_for_filter %}
-            <option value="{{ cat.pk }}" {% if request.GET.category == cat.pk|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
-            {% endfor %}
-        </select>
+        <input
+            type="hidden"
+            name="category"
+            id="categoryInput"
+            value="{{ request.GET.category }}"
+        >
+
+        <div class="dropdown">
+            <button
+                class="btn btn-outline-dark btn-sm dropdown-toggle"
+                type="button"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+                id="categoryDropdownBtn"
+            >
+                {% if request.GET.category %}
+                    {% for cat in categories_for_filter %}
+                        {% if request.GET.category == cat.pk|stringformat:"s" %}
+                            {{ cat.name }}
+                        {% endif %}
+                    {% endfor %}
+                {% else %}
+                    All Categories
+                {% endif %}
+            </button>
+
+            <ul class="dropdown-menu">
+                <li>
+                    <a
+                        class="dropdown-item category-option"
+                        href="#"
+                        data-value=""
+                        data-text="All Categories"
+                    >
+                        All Categories
+                    </a>
+                </li>
+
+                {% for cat in categories_for_filter %}
+                <li>
+                    <a
+                        class="dropdown-item category-option"
+                        href="#"
+                        data-value="{{ cat.pk }}"
+                        data-text="{{ cat.name }}"
+                    >
+                        {{ cat.name }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
     </div>
     <div class="col-auto form-check mx-1">
         <input type="checkbox" name="low_stock" value="true" id="lowStockCheck" class="form-check-input border-black" {% if request.GET.low_stock == "true" %}checked{% endif %}>
         <label class="form-check-label" for="lowStockCheck">Low stock only</label>
     </div>
     <div class="col-auto">
-        <button type="submit" class="btn btn-outline-primary btn-sm">Filter</button>
+        <button type="submit" class="btn btn-dark btn-sm">Filter</button>
         <a href="{% url 'item-list' %}" class="btn btn-outline-secondary btn-sm">Reset</a>
     </div>
 </form>
@@ -51,7 +121,7 @@
   <tbody>
     {% for item in items %}
     <tr>
-      <td><a href="{% url 'item-detail' item.pk %}">{{ item.sku }}</a></td>
+      <td><a href="{% url 'item-detail' item.pk %}" class="text-dark">{{ item.sku }}</a></td>
       <td>{{ item.name }}</td>
       <td>{{ item.category.name }}</td>
       <td>{{ item.unit_of_measure }}</td>
@@ -74,7 +144,7 @@
           class="d-inline"
         >
           {% csrf_token %}
-          <button type="submit" class="btn btn-outline-danger btn-sm">
+          <button type="submit" class="btn btn-dark btn-sm ms-1">
             Archive
           </button>
         </form>
@@ -102,4 +172,20 @@
     </ul>
 </nav>
 {% endif %} 
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const categoryInput = document.getElementById("categoryInput");
+    const categoryBtn = document.getElementById("categoryDropdownBtn");
+
+    document.querySelectorAll(".category-option").forEach(item => {
+        item.addEventListener("click", function (e) {
+            e.preventDefault();
+
+            categoryInput.value = this.dataset.value;
+            categoryBtn.textContent = this.dataset.text;
+        });
+    });
+});
+</script>
 {% endblock %}

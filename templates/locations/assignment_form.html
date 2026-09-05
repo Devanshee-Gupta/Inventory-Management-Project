@@ -17,7 +17,7 @@
         {{ form.location }}
         {% if form.location.errors %}<div class="text-danger small">{{ form.location.errors }}</div>{% endif %}
     </div>
-    <button type="submit" class="btn btn-primary">Assign</button>
-    <a href="{% url 'assignment-list' %}" class="btn btn-outline-secondary">Cancel</a>
+    <button type="submit" class="btn btn-dark mb-2">Assign</button>
+    <a href="{% url 'assignment-list' %}" class="btn btn-outline-secondary mb-2">Cancel</a>
 </form>
 {% endblock %}
